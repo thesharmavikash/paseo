@@ -4544,10 +4544,12 @@ export class Session {
     }
 
     const removedAgents = new Set<string>()
+    const affectedWorkspaceCwds = new Set<string>([targetPath])
     const agents = this.agentManager.listAgents()
     for (const agent of agents) {
       if (this.isPathWithinRoot(targetPath, agent.cwd)) {
         removedAgents.add(agent.id)
+        affectedWorkspaceCwds.add(agent.cwd)
         try {
           await this.agentManager.closeAgent(agent.id)
         } catch {
@@ -4565,6 +4567,7 @@ export class Session {
     for (const record of registryRecords) {
       if (this.isPathWithinRoot(targetPath, record.cwd)) {
         removedAgents.add(record.id)
+        affectedWorkspaceCwds.add(record.cwd)
         try {
           await this.agentStorage.remove(record.id)
         } catch {
@@ -4590,6 +4593,8 @@ export class Session {
         },
       })
     }
+
+    await this.emitWorkspaceUpdatesForCwds(affectedWorkspaceCwds)
 
     return Array.from(removedAgents)
   }
@@ -5669,6 +5674,25 @@ export class Session {
       kind: 'upsert',
       workspace,
     })
+  }
+
+  private async emitWorkspaceUpdatesForCwds(cwds: Iterable<string>): Promise<void> {
+    if (!this.workspaceUpdatesSubscription) {
+      return
+    }
+
+    const uniqueWorkspaceCwds = new Set<string>()
+    for (const cwd of cwds) {
+      const normalized = this.normalizeWorkspaceId(cwd)
+      if (!normalized) {
+        continue
+      }
+      uniqueWorkspaceCwds.add(normalized)
+    }
+
+    for (const workspaceCwd of uniqueWorkspaceCwds) {
+      await this.emitWorkspaceUpdateForCwd(workspaceCwd)
+    }
   }
 
   private async handleFetchAgents(

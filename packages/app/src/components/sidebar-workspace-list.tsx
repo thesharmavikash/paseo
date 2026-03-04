@@ -1,4 +1,4 @@
-import { View, Text, Pressable, Image, Platform } from 'react-native'
+import { View, Text, Pressable, Image, Platform, ActivityIndicator, Alert } from 'react-native'
 import { useQueries } from '@tanstack/react-query'
 import {
   useCallback,
@@ -31,12 +31,18 @@ import { useKeyboardShortcutsStore } from '@/stores/keyboard-shortcuts-store'
 import { formatTimeAgo } from '@/utils/time'
 import {
   ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
+import { useToast } from '@/contexts/toast-context'
 import {
   buildSidebarWorkspaceViewModel,
   type SidebarWorkspaceTreeRow,
 } from '@/utils/sidebar-shortcuts'
+import { useCheckoutGitActionsStore } from '@/stores/checkout-git-actions-store'
+
+const PASEO_WORKTREE_PATH_MARKER = '/.paseo/worktrees'
 
 function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): string | null {
   if (!icon) {
@@ -45,7 +51,7 @@ function toProjectIconDataUri(icon: { mimeType: string; data: string } | null): 
   return `data:${icon.mimeType};base64,${icon.data}`
 }
 
-interface SidebarAgentListProps {
+interface SidebarWorkspaceListProps {
   isOpen?: boolean
   projects: SidebarProjectEntry[]
   serverId: string | null
@@ -73,6 +79,8 @@ interface WorkspaceRowProps {
   showShortcutBadge: boolean
   onPress: () => void
   drag: () => void
+  isArchiving: boolean
+  useContextMenuTrigger?: boolean
 }
 
 function resolveWorkspaceCreatedAtLabel(workspace: SidebarWorkspaceEntry): string | null {
@@ -95,17 +103,33 @@ function resolveStatusDotColor(input: { theme: ReturnType<typeof useUnistyles>['
           : theme.colors.border
 }
 
+function isPaseoOwnedWorktreePath(path: string): boolean {
+  const normalizedPath = path.replace(/\\/g, '/')
+  const markerIndex = normalizedPath.indexOf(PASEO_WORKTREE_PATH_MARKER)
+  if (markerIndex <= 0) {
+    return false
+  }
+  const nextChar = normalizedPath[markerIndex + PASEO_WORKTREE_PATH_MARKER.length]
+  return !nextChar || nextChar === '/'
+}
+
 function WorkspaceStatusIndicator({
   bucket,
+  loading = false,
 }: {
   bucket: SidebarWorkspaceEntry['statusBucket']
+  loading?: boolean
 }) {
   const { theme } = useUnistyles()
   const color = resolveStatusDotColor({ theme, bucket })
 
   return (
     <View style={styles.workspaceStatusDot}>
-      <View style={[styles.workspaceStatusDotFill, { backgroundColor: color }]} />
+      {loading ? (
+        <ActivityIndicator size={8} color={theme.colors.foregroundMuted} />
+      ) : (
+        <View style={[styles.workspaceStatusDotFill, { backgroundColor: color }]} />
+      )}
     </View>
   )
 }
@@ -177,7 +201,10 @@ function WorkspaceRow({
   showShortcutBadge,
   onPress,
   drag,
+  isArchiving,
+  useContextMenuTrigger = true,
 }: WorkspaceRowProps) {
+  const { theme } = useUnistyles()
   const createdAtLabel = resolveWorkspaceCreatedAtLabel(workspace)
   const didLongPressRef = useRef(false)
 
@@ -197,22 +224,10 @@ function WorkspaceRow({
     return Platform.OS === 'web' ? null : Gesture.Pan().manualActivation(true).runOnJS(true)
   }, [])
 
-  const trigger = (
-    <ContextMenuTrigger
-      enabledOnMobile={false}
-      style={({ pressed, hovered = false }) => [
-        styles.workspaceRow,
-        selected && styles.workspaceRowSelected,
-        hovered && styles.workspaceRowHovered,
-        pressed && styles.workspaceRowPressed,
-      ]}
-      onPress={handlePress}
-      onLongPress={handleLongPress}
-      delayLongPress={200}
-      testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
-    >
+  const rowChildren = (
+    <>
       <View style={styles.workspaceRowLeft}>
-        <WorkspaceStatusIndicator bucket={workspace.statusBucket} />
+        <WorkspaceStatusIndicator bucket={workspace.statusBucket} loading={isArchiving} />
         <Text style={styles.workspaceBranchText} numberOfLines={1}>
           {workspace.name}
         </Text>
@@ -229,13 +244,60 @@ function WorkspaceRow({
           </View>
         ) : null}
       </View>
-    </ContextMenuTrigger>
+    </>
   )
 
-  return moveMonitorGesture ? (
+  const trigger = useContextMenuTrigger ? (
+    <ContextMenuTrigger
+      enabledOnMobile={false}
+      disabled={isArchiving}
+      style={({ pressed, hovered = false }) => [
+        styles.workspaceRow,
+        selected && styles.workspaceRowSelected,
+        hovered && styles.workspaceRowHovered,
+        pressed && styles.workspaceRowPressed,
+      ]}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={200}
+      testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+    >
+      {rowChildren}
+    </ContextMenuTrigger>
+  ) : (
+    <Pressable
+      disabled={isArchiving}
+      style={({ pressed, hovered = false }) => [
+        styles.workspaceRow,
+        selected && styles.workspaceRowSelected,
+        hovered && styles.workspaceRowHovered,
+        pressed && styles.workspaceRowPressed,
+      ]}
+      onPress={handlePress}
+      onLongPress={handleLongPress}
+      delayLongPress={200}
+      testID={`sidebar-workspace-row-${workspace.workspaceKey}`}
+    >
+      {rowChildren}
+    </Pressable>
+  )
+
+  const content = moveMonitorGesture ? (
     <GestureDetector gesture={moveMonitorGesture}>{trigger}</GestureDetector>
   ) : (
     trigger
+  )
+
+  return (
+    <View style={styles.workspaceRowContainer}>
+      {content}
+      {isArchiving ? (
+        <View style={styles.workspaceArchivingOverlay} testID={`sidebar-workspace-archiving-${workspace.workspaceKey}`}>
+          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <Text style={styles.workspaceArchivingText}>Archiving</Text>
+        </View>
+      ) : null}
+    </View>
   )
 }
 
@@ -254,6 +316,72 @@ function WorkspaceRowWithMenu({
   onPress: () => void
   drag: () => void
 }) {
+  const toast = useToast()
+  const archiveWorktree = useCheckoutGitActionsStore((state) => state.archiveWorktree)
+  const archiveStatus = useCheckoutGitActionsStore((state) =>
+    state.getStatus({
+      serverId: workspace.serverId,
+      cwd: workspace.workspaceId,
+      actionId: 'archive-worktree',
+    })
+  )
+  const isArchiving = archiveStatus === 'pending'
+  const isPaseoOwnedWorktree = isPaseoOwnedWorktreePath(workspace.workspaceId)
+
+  const handleArchiveWorktree = useCallback(() => {
+    if (isArchiving) {
+      return
+    }
+
+    Alert.alert(
+      'Archive worktree?',
+      `Archive "${workspace.name}"?\n\nThis removes the worktree from the sidebar.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Archive',
+          style: 'destructive',
+          onPress: () => {
+            void archiveWorktree({
+              serverId: workspace.serverId,
+              cwd: workspace.workspaceId,
+              worktreePath: workspace.workspaceId,
+            }).catch((error) => {
+              const message = error instanceof Error ? error.message : 'Failed to archive worktree'
+              toast.error(message)
+            })
+          },
+        },
+      ],
+      { cancelable: true }
+    )
+  }, [
+    archiveWorktree,
+    isArchiving,
+    toast,
+    workspace.name,
+    workspace.serverId,
+    workspace.workspaceId,
+  ])
+
+  if (!isPaseoOwnedWorktree) {
+    return (
+      <WorkspaceRow
+        workspace={workspace}
+        selected={selected}
+        shortcutNumber={shortcutNumber}
+        showShortcutBadge={showShortcutBadge}
+        onPress={onPress}
+        drag={drag}
+        isArchiving={false}
+        useContextMenuTrigger={false}
+      />
+    )
+  }
+
   return (
     <ContextMenu>
       <WorkspaceRow
@@ -263,7 +391,19 @@ function WorkspaceRowWithMenu({
         showShortcutBadge={showShortcutBadge}
         onPress={onPress}
         drag={drag}
+        isArchiving={isArchiving}
       />
+      <ContextMenuContent align="start" width={220} testID={`sidebar-workspace-context-${workspace.workspaceKey}`}>
+        <ContextMenuItem
+          testID={`sidebar-workspace-context-${workspace.workspaceKey}-archive`}
+          status={archiveStatus}
+          pendingLabel="Archiving..."
+          destructive
+          onSelect={handleArchiveWorktree}
+        >
+          Archive worktree
+        </ContextMenuItem>
+      </ContextMenuContent>
     </ContextMenu>
   )
 }
@@ -290,7 +430,7 @@ function hasVisibleOrderChanged(input: {
   return input.reorderedVisibleKeys.some((key, index) => currentVisible[index] !== key)
 }
 
-export function SidebarAgentList({
+export function SidebarWorkspaceList({
   isOpen = true,
   projects,
   serverId,
@@ -299,7 +439,7 @@ export function SidebarAgentList({
   onWorkspacePress,
   listFooterComponent,
   parentGestureRef,
-}: SidebarAgentListProps) {
+}: SidebarWorkspaceListProps) {
   const isMobile = UnistylesRuntime.breakpoint === 'xs' || UnistylesRuntime.breakpoint === 'sm'
   const showDesktopWebScrollbar = Platform.OS === 'web' && !isMobile
   const segments = useSegments()
@@ -692,6 +832,9 @@ const styles = StyleSheet.create((theme) => ({
   workspaceRowSelected: {
     backgroundColor: theme.colors.surface2,
   },
+  workspaceRowContainer: {
+    position: 'relative',
+  },
   workspaceStatusDot: {
     width: 8,
     height: 8,
@@ -705,6 +848,21 @@ const styles = StyleSheet.create((theme) => ({
     width: 8,
     height: 8,
     borderRadius: theme.borderRadius.full,
+  },
+  workspaceArchivingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: `${theme.colors.surface0}cc`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: theme.spacing[2],
+    zIndex: 1,
+  },
+  workspaceArchivingText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: '600',
   },
   workspaceBranchText: {
     color: theme.colors.foreground,

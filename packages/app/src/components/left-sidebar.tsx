@@ -13,7 +13,7 @@ import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyl
 import { Plus, Settings, Users } from 'lucide-react-native'
 import { router, usePathname } from 'expo-router'
 import { usePanelStore } from '@/stores/panel-store'
-import { SidebarAgentList } from './sidebar-agent-list'
+import { SidebarWorkspaceList } from './sidebar-workspace-list'
 import { SidebarAgentListSkeleton } from './sidebar-agent-list-skeleton'
 import { useSidebarWorkspacesList } from '@/hooks/use-sidebar-workspaces-list'
 import { useSidebarAnimation } from '@/contexts/sidebar-animation-context'
@@ -365,7 +365,7 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
               {isInitialLoad ? (
                 <SidebarAgentListSkeleton />
               ) : (
-                <SidebarAgentList
+                <SidebarWorkspaceList
                   isOpen={isOpen}
                   serverId={activeServerId}
                   projects={projects}
@@ -489,7 +489,7 @@ export function LeftSidebar({ selectedAgentId }: LeftSidebarProps) {
       {isInitialLoad ? (
         <SidebarAgentListSkeleton />
       ) : (
-        <SidebarAgentList
+        <SidebarWorkspaceList
           isOpen={isOpen}
           serverId={activeServerId}
           projects={projects}

@@ -264,4 +264,29 @@ describe('workspace aggregation', () => {
       id: '/tmp/repo',
     })
   })
+
+  test('workspace update fanout for multiple cwd values is deduplicated', async () => {
+    const session = createSessionForWorkspaceTests() as any
+    session.workspaceUpdatesSubscription = {
+      subscriptionId: 'sub-dedupe',
+      filter: undefined,
+      isBootstrapping: false,
+      pendingUpdatesByWorkspaceId: new Map(),
+    }
+
+    const emitWorkspaceUpdateForCwd = vi.fn(async () => {})
+    session.emitWorkspaceUpdateForCwd = emitWorkspaceUpdateForCwd
+
+    await session.emitWorkspaceUpdatesForCwds([
+      '/tmp/repo',
+      '/tmp/repo/',
+      '  /tmp/repo  ',
+      '/tmp/repo/sub',
+      '/tmp/repo/sub/',
+    ])
+
+    expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledTimes(2)
+    expect(emitWorkspaceUpdateForCwd).toHaveBeenNthCalledWith(1, '/tmp/repo')
+    expect(emitWorkspaceUpdateForCwd).toHaveBeenNthCalledWith(2, '/tmp/repo/sub')
+  })
 })

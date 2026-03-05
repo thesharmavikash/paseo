@@ -8,6 +8,12 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function workspaceLabelFromPath(value: string): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const parts = normalized.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? normalized;
+}
+
 function candidateWorkspaceIds(inputPath: string): string[] {
   const trimmed = inputPath.replace(/\/+$/, '');
   const candidates = new Set<string>([trimmed]);
@@ -63,6 +69,21 @@ async function switchViaSidebar(input: {
   });
 }
 
+async function expectWorkspaceHeader(
+  page: Page,
+  input: { title: string; subtitle: string }
+): Promise<void> {
+  const titleLocator = page.getByTestId('workspace-header-title');
+  const subtitleLocator = page.getByTestId('workspace-header-subtitle');
+
+  await expect(titleLocator.first()).toHaveText(input.title, {
+    timeout: 30000,
+  });
+  await expect(subtitleLocator.first()).toHaveText(input.subtitle, {
+    timeout: 30000,
+  });
+}
+
 test('sidebar workspace switch keeps visible content in sync with selected workspace', async ({ page }) => {
   const serverId = process.env.E2E_SERVER_ID;
   if (!serverId) {
@@ -89,13 +110,22 @@ test('sidebar workspace switch keeps visible content in sync with selected works
 
     await page.goto(buildHostWorkspaceRoute(serverId, repoA.path));
     await expect(page).toHaveURL(new RegExp('/workspace/'), { timeout: 30000 });
-    await expect(page.getByText('sync-a-branch', { exact: true }).first()).toBeVisible({ timeout: 30000 });
+    await expectWorkspaceHeader(page, {
+      title: 'sync-a-branch',
+      subtitle: workspaceLabelFromPath(repoA.path),
+    });
 
     await switchViaSidebar({ page, serverId, targetWorkspacePath: repoB.path });
-    await expect(page.getByText('sync-b-branch', { exact: true }).first()).toBeVisible({ timeout: 30000 });
+    await expectWorkspaceHeader(page, {
+      title: 'sync-b-branch',
+      subtitle: workspaceLabelFromPath(repoB.path),
+    });
 
     await switchViaSidebar({ page, serverId, targetWorkspacePath: repoA.path });
-    await expect(page.getByText('sync-a-branch', { exact: true }).first()).toBeVisible({ timeout: 30000 });
+    await expectWorkspaceHeader(page, {
+      title: 'sync-a-branch',
+      subtitle: workspaceLabelFromPath(repoA.path),
+    });
   } finally {
     await repoA.cleanup();
     await repoB.cleanup();

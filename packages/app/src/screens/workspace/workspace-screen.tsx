@@ -1059,10 +1059,18 @@ function WorkspaceScreenContent({
                     </>
                   ) : (
                     <>
-                      <Text style={styles.headerTitle} numberOfLines={1}>
+                      <Text
+                        testID="workspace-header-title"
+                        style={styles.headerTitle}
+                        numberOfLines={1}
+                      >
                         {workspaceHeader.title}
                       </Text>
-                      <Text style={styles.headerProjectTitle} numberOfLines={1}>
+                      <Text
+                        testID="workspace-header-subtitle"
+                        style={styles.headerProjectTitle}
+                        numberOfLines={1}
+                      >
                         {workspaceHeader.subtitle}
                       </Text>
                     </>

@@ -1,5 +1,5 @@
 ---
-name: handoff
+name: paseo-handoff
 description: Hand off the current task to another agent with full context. Use when the user says "handoff", "hand off", "hand this to", or wants to pass work to another agent (Codex or Claude).
 user-invocable: true
 ---

@@ -1,5 +1,5 @@
 ---
-name: loop
+name: paseo-loop
 description: Run a task in a worker→judge loop until acceptance criteria are met. Use when the user says "loop", "loop this", "keep trying until", or wants iterative autonomous execution.
 user-invocable: true
 ---

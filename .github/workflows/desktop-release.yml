@@ -31,11 +31,10 @@ concurrency:
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-  REQUESTED_PLATFORM: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.platform || (startsWith(github.ref_name, 'desktop-windows-v') && 'windows' || startsWith(github.ref_name, 'desktop-linux-v') && 'linux' || startsWith(github.ref_name, 'desktop-macos-v') && 'macos' || 'all') }}
 
 jobs:
   publish-macos:
-    if: ${{ env.REQUESTED_PLATFORM == 'all' || env.REQUESTED_PLATFORM == 'macos' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-macos-v'))) }}
     strategy:
       matrix:
         include:
@@ -167,7 +166,7 @@ jobs:
           args: --target ${{ matrix.rust_target }}
 
   publish-linux:
-    if: ${{ env.REQUESTED_PLATFORM == 'all' || env.REQUESTED_PLATFORM == 'linux' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-linux-v'))) }}
     permissions:
       contents: write
       packages: read
@@ -289,7 +288,7 @@ jobs:
           args: --bundles appimage
 
   publish-windows:
-    if: ${{ env.REQUESTED_PLATFORM == 'all' || env.REQUESTED_PLATFORM == 'windows' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows')) || (github.event_name == 'push' && (startsWith(github.ref_name, 'v') || startsWith(github.ref_name, 'desktop-v') || startsWith(github.ref_name, 'desktop-windows-v'))) }}
     permissions:
       contents: write
       packages: read

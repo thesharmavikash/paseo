@@ -65,4 +65,4 @@ npm run typecheck
 
 ## License
 
-MIT
+AGPL-3.0

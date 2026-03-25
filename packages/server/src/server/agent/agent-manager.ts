@@ -484,13 +484,22 @@ export class AgentManager {
     return this.timelineStore.getItems(id);
   }
 
-  getTimelineRows(id: string): AgentTimelineRow[] {
+  async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
+    if (this.durableTimelineStore) {
+      return await this.durableTimelineStore.getCommittedRows(id);
+    }
     return this.timelineStore.getRows(id);
   }
 
-  fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
+  async fetchTimeline(
+    id: string,
+    options?: AgentTimelineFetchOptions,
+  ): Promise<AgentTimelineFetchResult> {
     this.requireAgent(id);
+    if (this.durableTimelineStore) {
+      return await this.durableTimelineStore.fetchCommitted(id, options);
+    }
     return this.timelineStore.fetch(id, options);
   }
 

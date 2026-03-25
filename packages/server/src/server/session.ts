@@ -6073,7 +6073,7 @@ export class Session {
     try {
       const snapshot = await this.ensureAgentLoaded(msg.agentId);
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = await this.agentManager.fetchTimeline(msg.agentId, {
         direction,
         cursor,
         limit,

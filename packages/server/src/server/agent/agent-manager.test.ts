@@ -1,10 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
+import { DbAgentTimelineStore } from "../db/db-agent-timeline-store.js";
+import { openPaseoDatabase } from "../db/pglite-database.js";
 import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
@@ -1060,7 +1062,7 @@ describe("AgentManager", () => {
       });
     }
 
-    const baseline = manager.fetchTimeline(snapshot.id, {
+    const baseline = await manager.fetchTimeline(snapshot.id, {
       direction: "tail",
       limit: 0,
     });
@@ -1075,7 +1077,7 @@ describe("AgentManager", () => {
       text: "finalized reply",
     });
 
-    const result = manager.fetchTimeline(snapshot.id, {
+    const result = await manager.fetchTimeline(snapshot.id, {
       direction: "after",
       cursor: {
         seq: 120,
@@ -1089,6 +1091,114 @@ describe("AgentManager", () => {
       type: "assistant_message",
       text: "finalized reply",
     });
+  });
+
+  test("fetchTimeline and getTimelineRows prefer the durable store while live helpers stay in-memory", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-durable-read-authority-"));
+    const storagePath = join(workdir, "agents");
+    const dataDir = join(workdir, "db");
+    const storage = new AgentStorage(storagePath, logger);
+    const database = await openPaseoDatabase(dataDir);
+
+    try {
+      const durableTimelineStore = new DbAgentTimelineStore(database.db);
+      const manager = new AgentManager({
+        clients: {
+          codex: new TestAgentClient(),
+        },
+        registry: storage,
+        durableTimelineStore,
+        logger,
+        idFactory: () => "00000000-0000-4000-8000-000000000139",
+      });
+
+      const snapshot = await manager.createAgent({
+        provider: "codex",
+        cwd: workdir,
+      });
+
+      const durableOnlyItem: AgentTimelineItem = {
+        type: "assistant_message",
+        text: "durable only",
+      };
+      const durableOnlyRow = {
+        seq: 1,
+        timestamp: "2026-03-24T00:00:01.000Z",
+        item: durableOnlyItem,
+      };
+
+      await durableTimelineStore.bulkInsert(snapshot.id, [durableOnlyRow]);
+
+      expect(manager.getTimeline(snapshot.id)).toEqual([]);
+      expect(manager.getLastAssistantMessage(snapshot.id)).toBeNull();
+      await expect(manager.getTimelineRows(snapshot.id)).resolves.toEqual([durableOnlyRow]);
+      await expect(
+        manager.fetchTimeline(snapshot.id, {
+          direction: "tail",
+          limit: 0,
+        }),
+      ).resolves.toEqual({
+        direction: "tail",
+        window: {
+          minSeq: 1,
+          maxSeq: 1,
+          nextSeq: 2,
+        },
+        hasOlder: false,
+        hasNewer: false,
+        rows: [durableOnlyRow],
+      });
+    } finally {
+      await database.close();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  });
+
+  test("getTimelineRows falls back to the in-memory timeline when no durable store is configured", async () => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rows-fallback-"));
+    const storagePath = join(workdir, "agents");
+    const storage = new AgentStorage(storagePath, logger);
+    const manager = new AgentManager({
+      clients: {
+        codex: new TestAgentClient(),
+      },
+      registry: storage,
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000140",
+    });
+
+    const snapshot = await manager.createAgent({
+      provider: "codex",
+      cwd: workdir,
+    });
+
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "row one",
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "row two",
+    });
+
+    await expect(manager.getTimelineRows(snapshot.id)).resolves.toEqual([
+      {
+        seq: 1,
+        timestamp: expect.any(String),
+        item: {
+          type: "assistant_message",
+          text: "row one",
+        },
+      },
+      {
+        seq: 2,
+        timestamp: expect.any(String),
+        item: {
+          type: "assistant_message",
+          text: "row two",
+        },
+      },
+    ]);
   });
 
   test("getAgent does not expose committed history internals once manager owns the seam", async () => {
@@ -1136,7 +1246,7 @@ describe("AgentManager", () => {
       },
     ]);
 
-    const fetched = manager.fetchTimeline(snapshot.id, {
+    const fetched = await manager.fetchTimeline(snapshot.id, {
       direction: "tail",
       limit: 0,
     });
@@ -1216,7 +1326,7 @@ describe("AgentManager", () => {
         text: "final reply",
       },
     ]);
-    const fetched = manager.fetchTimeline(snapshot.id, {
+    const fetched = await manager.fetchTimeline(snapshot.id, {
       direction: "tail",
       limit: 0,
     });
@@ -1266,7 +1376,7 @@ describe("AgentManager", () => {
       text: "fifth",
     });
 
-    const result = manager.fetchTimeline(snapshot.id, {
+    const result = await manager.fetchTimeline(snapshot.id, {
       direction: "before",
       cursor: {
         seq: 5,
@@ -1312,7 +1422,7 @@ describe("AgentManager", () => {
       text: "third",
     });
 
-    const fetched = manager.fetchTimeline(snapshot.id, {
+    const fetched = await manager.fetchTimeline(snapshot.id, {
       direction: "tail",
       limit: 0,
     });

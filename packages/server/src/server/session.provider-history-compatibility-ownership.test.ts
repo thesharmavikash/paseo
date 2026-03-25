@@ -81,7 +81,7 @@ function createSessionForOwnershipTests(options?: {
     hydrateTimelineFromProvider: vi.fn(async () => {
       throw new Error("Session should not call hydrateTimelineFromProvider directly");
     }),
-    fetchTimeline: vi.fn(() => ({
+    fetchTimeline: vi.fn(async () => ({
       rows: options?.timelineRows ?? [],
       hasOlder: false,
       hasNewer: false,

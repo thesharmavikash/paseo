@@ -693,6 +693,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const agentDefinition = providerDefinitionMap.get(formState.provider);
   const modeOptions = agentDefinition?.modes ?? [];
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
+  const resolvedModelId = effectiveModel?.id ?? formState.model;
   const availableThinkingOptions = effectiveModel?.thinkingOptions ?? [];
   const isModelLoading = providerModelsQuery.isLoading || providerModelsQuery.isFetching;
   const modelError =
@@ -709,7 +710,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setProviderFromUser,
       selectedMode: formState.modeId,
       setModeFromUser,
-      selectedModel: formState.model,
+      selectedModel: resolvedModelId,
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
       setThinkingOptionFromUser,
@@ -735,7 +736,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       formState.serverId,
       formState.provider,
       formState.modeId,
-      formState.model,
+      resolvedModelId,
       formState.thinkingOptionId,
       formState.workingDir,
       setSelectedServerId,

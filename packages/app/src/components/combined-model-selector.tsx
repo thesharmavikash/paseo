@@ -11,11 +11,11 @@ const INLINE_MODEL_THRESHOLD = 8;
 
 type DrillDownView = { provider: string };
 
-function resolveDefaultModelLabel(models: AgentModelDefinition[] | undefined): string | null {
+function resolveDefaultModelLabel(models: AgentModelDefinition[] | undefined): string {
   if (!models || models.length === 0) {
-    return null;
+    return "Select model";
   }
-  return (models.find((model) => model.isDefault) ?? models[0])?.label ?? null;
+  return (models.find((model) => model.isDefault) ?? models[0])?.label ?? "Select model";
 }
 
 interface CombinedModelSelectorProps {
@@ -75,7 +75,7 @@ export function CombinedModelSelector({
     const models = allProviderModels.get(selectedProvider);
     if (!models) return isLoading ? "Loading..." : "Select model";
     const model = models.find((m) => m.id === selectedModel);
-    return model?.label ?? resolveDefaultModelLabel(models) ?? "Select model";
+    return model?.label ?? resolveDefaultModelLabel(models);
   }, [allProviderModels, selectedProvider, selectedModel, isLoading]);
 
   return (

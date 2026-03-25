@@ -46,6 +46,7 @@ export async function submitAgentInput<TImage>(
   try {
     await input.submitMessage({ message: trimmedMessage, imageAttachments });
     input.clearDraft("sent");
+    input.setIsProcessing(false);
     return "submitted";
   } catch (error) {
     input.onSubmitError?.(error);

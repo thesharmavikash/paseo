@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { View, Text, Platform, Pressable, Keyboard } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useShallow } from "zustand/shallow";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Brain, ChevronDown, ShieldAlert, ShieldCheck, ShieldOff } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
@@ -603,8 +605,29 @@ function ControlledStatusBar({
   );
 }
 
+const EMPTY_MODES: AgentMode[] = [];
+
 export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
-  const agent = useSessionStore((state) => state.sessions[serverId]?.agents?.get(agentId));
+  const agent = useSessionStore(
+    useShallow((state) => {
+      const currentAgent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+      return currentAgent
+        ? {
+            provider: currentAgent.provider,
+            cwd: currentAgent.cwd,
+            currentModeId: currentAgent.currentModeId,
+            runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
+            model: currentAgent.model,
+            thinkingOptionId: currentAgent.thinkingOptionId,
+          }
+        : null;
+    }),
+  );
+  const availableModes = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => state.sessions[serverId]?.agents?.get(agentId)?.availableModes ?? EMPTY_MODES,
+    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
+  );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
 
   const modelsQuery = useQuery({
@@ -631,23 +654,23 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
   const models = modelsQuery.data ?? null;
 
   const displayMode =
-    agent?.availableModes?.find((mode) => mode.id === agent.currentModeId)?.label ||
+    availableModes.find((mode) => mode.id === agent?.currentModeId)?.label ||
     agent?.currentModeId ||
     "default";
 
   const modelSelection = resolveAgentModelSelection({
     models,
-    runtimeModelId: agent?.runtimeInfo?.model,
+    runtimeModelId: agent?.runtimeModelId,
     configuredModelId: agent?.model,
     explicitThinkingOptionId: agent?.thinkingOptionId,
   });
 
   const modeOptions = useMemo<StatusOption[]>(() => {
-    return (agent?.availableModes ?? []).map((mode) => ({
+    return availableModes.map((mode) => ({
       id: mode.id,
       label: mode.label,
     }));
-  }, [agent?.availableModes]);
+  }, [availableModes]);
 
   const modelOptions = useMemo<StatusOption[]>(() => {
     return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
@@ -668,9 +691,7 @@ export function AgentStatusBar({ agentId, serverId }: AgentStatusBarProps) {
     <ControlledStatusBar
       provider={agent.provider}
       modeOptions={
-        modeOptions.length > 0
-          ? modeOptions
-          : [{ id: agent.currentModeId ?? "", label: displayMode }]
+        modeOptions.length > 0 ? modeOptions : [{ id: agent.currentModeId ?? "", label: displayMode }]
       }
       selectedModeId={agent.currentModeId ?? undefined}
       onSelectMode={(modeId) => {

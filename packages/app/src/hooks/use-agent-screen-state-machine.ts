@@ -1,5 +1,17 @@
 import { useRef } from "react";
-import type { Agent } from "@/contexts/session-context";
+
+export interface AgentScreenAgent {
+  serverId: string;
+  id: string;
+  status: "initializing" | "idle" | "running" | "error" | "closed";
+  cwd: string;
+  projectPlacement?: {
+    checkout?: {
+      cwd?: string;
+      isGit?: boolean;
+    };
+  } | null;
+}
 
 export type AgentScreenMissingState =
   | { kind: "idle" }
@@ -8,8 +20,8 @@ export type AgentScreenMissingState =
   | { kind: "error"; message: string };
 
 export interface AgentScreenMachineInput {
-  agent: Agent | null;
-  placeholderAgent: Agent | null;
+  agent: AgentScreenAgent | null;
+  placeholderAgent: AgentScreenAgent | null;
   missingAgentState: AgentScreenMissingState;
   isConnected: boolean;
   isArchivingCurrentAgent: boolean;
@@ -31,7 +43,7 @@ export type AgentScreenToastLatch = "none" | "history_refresh" | "sync_error";
 
 export interface AgentScreenMachineMemory {
   hasRenderedReady: boolean;
-  lastReadyAgent: Agent | null;
+  lastReadyAgent: AgentScreenAgent | null;
   activeToastLatch: AgentScreenToastLatch;
   hadInitialSyncFailure: boolean;
 }
@@ -70,7 +82,7 @@ export type AgentScreenViewState =
     }
   | {
       tag: "ready";
-      agent: Agent;
+      agent: AgentScreenAgent;
       source: "authoritative" | "optimistic" | "stale";
       sync: AgentScreenReadySyncState;
       isArchiving: boolean;

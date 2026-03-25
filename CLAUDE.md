@@ -46,9 +46,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Always run typecheck after every change.**
 
-## Orchestrator mode
+## Debugging
 
-- Prefix agent titles with "🎭" (e.g., "🎭 Feature Implementation")
-- Launch agents in the most permissive mode
-- Set cwd to the repository root
-- When agent control tool calls fail, list agents first — it may be a wait timeout
+
+Find the complete daemon logs and traces in the $PASEO_HOME/daemon.log

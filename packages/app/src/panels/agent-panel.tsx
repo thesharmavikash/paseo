@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Text, View } from "react-native";
 import ReanimatedAnimated from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useShallow } from "zustand/shallow";
+import { useStoreWithEqualityFn } from "zustand/traditional";
 import { Bot } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/components/agent-stream-view";
@@ -16,6 +18,7 @@ import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
 import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import {
   useAgentScreenStateMachine,
+  type AgentScreenAgent,
   type AgentScreenMissingState,
 } from "@/hooks/use-agent-screen-state-machine";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
@@ -78,11 +81,21 @@ function useAgentPanelDescriptor(
   target: { kind: "agent"; agentId: string },
   context: { serverId: string },
 ): PanelDescriptor {
-  const agent = useSessionStore(
-    (state) => state.sessions[context.serverId]?.agents?.get(target.agentId) ?? null,
+  const descriptorState = useSessionStore(
+    useShallow((state) => {
+      const agent = state.sessions[context.serverId]?.agents?.get(target.agentId) ?? null;
+      return {
+        provider: agent?.provider ?? "codex",
+        title: agent?.title ?? null,
+        status: agent?.status ?? null,
+        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
+        requiresAttention: agent?.requiresAttention ?? false,
+        attentionReason: agent?.attentionReason ?? null,
+      };
+    }),
   );
-  const provider = agent?.provider ?? "codex";
-  const label = resolveWorkspaceAgentTabLabel(agent?.title);
+  const provider = descriptorState.provider;
+  const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
   const icon = provider === "claude" ? ClaudeIcon : provider === "codex" ? CodexIcon : Bot;
 
   return {
@@ -90,12 +103,12 @@ function useAgentPanelDescriptor(
     subtitle: `${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
-    statusBucket: agent
+    statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({
-          status: agent.status,
-          pendingPermissionCount: agent.pendingPermissions.length,
-          requiresAttention: agent.requiresAttention,
-          attentionReason: agent.attentionReason,
+          status: descriptorState.status,
+          pendingPermissionCount: descriptorState.pendingPermissionCount,
+          requiresAttention: descriptorState.requiresAttention,
+          attentionReason: descriptorState.attentionReason,
         })
       : null,
   };
@@ -243,8 +256,25 @@ function AgentPanelBody({
     addImagesRef.current = addImages;
   }, []);
 
-  const agent = useSessionStore((state) =>
-    agentId ? state.sessions[serverId]?.agents?.get(agentId) : undefined,
+  const agentState = useSessionStore(
+    useShallow((state) => {
+      const agent = agentId ? state.sessions[serverId]?.agents?.get(agentId) ?? null : null;
+      return {
+        serverId: agent?.serverId ?? null,
+        id: agent?.id ?? null,
+        status: agent?.status ?? null,
+        cwd: agent?.cwd ?? null,
+        archivedAt: agent?.archivedAt ?? null,
+        requiresAttention: agent?.requiresAttention ?? false,
+        attentionReason: agent?.attentionReason ?? null,
+      };
+    }),
+  );
+  const projectPlacement = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) =>
+      agentId ? (state.sessions[serverId]?.agents?.get(agentId)?.projectPlacement ?? null) : null,
+    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
   );
   const streamItemsRaw = useSessionStore((state) =>
     agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
@@ -318,51 +348,13 @@ function AgentPanelBody({
     agentId,
     client,
     isConnected,
-    requiresAttention: agent?.requiresAttention,
-    attentionReason: agent?.attentionReason,
+    requiresAttention: agentState.requiresAttention,
+    attentionReason: agentState.attentionReason,
     isScreenFocused: isPaneFocused,
   });
   useEffect(() => {
     clearOnAgentBlurRef.current = attentionController.clearOnAgentBlur;
   }, [attentionController.clearOnAgentBlur]);
-
-  // ---------------------------------------------------------------------------
-  // DEBUG: track which selector values change between renders
-  // ---------------------------------------------------------------------------
-  const debugPrevRef = useRef<Record<string, unknown>>({});
-  useEffect(() => {
-    const prev = debugPrevRef.current;
-    const curr: Record<string, unknown> = {
-      agent,
-      "agent?.status": agent?.status,
-      "agent?.cwd": agent?.cwd,
-      "agent?.updatedAt": agent?.updatedAt,
-      "agent?.requiresAttention": agent?.requiresAttention,
-      streamItemsRaw,
-      "streamItems.length": streamItems.length,
-      allPendingPermissions,
-      isInitializingFromMap,
-      historySyncGeneration,
-      hasAppliedAuthoritativeHistory,
-      agentHistorySyncGeneration,
-      hasSession,
-      isPaneFocused,
-      isConnected,
-    };
-    const changed: string[] = [];
-    for (const key of Object.keys(curr)) {
-      if (!Object.is(prev[key], curr[key])) {
-        changed.push(key);
-      }
-    }
-    if (changed.length > 0 && Object.keys(prev).length > 0) {
-      console.log("[AgentPanelBody] values changed:", changed.join(", "), {
-        changed: Object.fromEntries(changed.map((k) => [k, { prev: prev[k], curr: curr[k] }])),
-      });
-    }
-    debugPrevRef.current = curr;
-  });
-  // ---------------------------------------------------------------------------
 
   const { style: animatedKeyboardStyle } = useKeyboardShiftStyle({
     mode: "translate",
@@ -488,49 +480,34 @@ function AgentPanelBody({
   }, [optimisticStreamItems, streamItems]);
 
   const shouldUseOptimisticStream = isPendingCreateForPanel && optimisticStreamItems.length > 0;
-  const authoritativeStatus = agent?.status;
+  const authoritativeStatus = agentState.status;
   const isAuthoritativeBootstrapping =
     authoritativeStatus === "initializing" || authoritativeStatus === "idle";
   const showPendingCreateSubmitLoading =
     isPendingCreateForPanel && (!authoritativeStatus || isAuthoritativeBootstrapping);
   const canFinalizePendingCreate = Boolean(authoritativeStatus) && !isAuthoritativeBootstrapping;
 
-  const placeholderAgent: Agent | null = useMemo(() => {
+  const agent: AgentScreenAgent | null =
+    agentState.serverId && agentState.id && agentState.status && agentState.cwd
+      ? {
+          serverId: agentState.serverId,
+          id: agentState.id,
+          status: agentState.status,
+          cwd: agentState.cwd,
+          projectPlacement,
+        }
+      : null;
+
+  const placeholderAgent: AgentScreenAgent | null = useMemo(() => {
     if (!shouldUseOptimisticStream || !agentId) {
       return null;
     }
-    const now = new Date();
     return {
       serverId,
       id: agentId,
-      provider: "claude",
       status: "running",
-      createdAt: now,
-      updatedAt: now,
-      lastUserMessageAt: now,
-      lastActivityAt: now,
-      capabilities: {
-        supportsStreaming: true,
-        supportsSessionPersistence: false,
-        supportsDynamicModes: false,
-        supportsMcpServers: false,
-        supportsReasoningStream: false,
-        supportsToolInvocations: false,
-      },
-      currentModeId: null,
-      availableModes: [],
-      pendingPermissions: [],
-      persistence: null,
-      runtimeInfo: {
-        provider: "claude",
-        sessionId: null,
-        model: null,
-        modeId: null,
-      },
-      title: "Agent",
       cwd: ".",
-      model: null,
-      labels: {},
+      projectPlacement: null,
     };
   }, [agentId, serverId, shouldUseOptimisticStream]);
 
@@ -642,7 +619,7 @@ function AgentPanelBody({
     if (!agentId) {
       return;
     }
-    if (agent || shouldUseOptimisticStream) {
+    if (agentState.id || shouldUseOptimisticStream) {
       if (missingAgentState.kind !== "idle") {
         setMissingAgentState({ kind: "idle" });
       }
@@ -717,7 +694,7 @@ function AgentPanelBody({
         setMissingAgentState({ kind: "error", message });
       });
   }, [
-    agent,
+    agentState.id,
     agentId,
     client,
     ensureAgentIsInitialized,
@@ -803,7 +780,7 @@ function AgentPanelBody({
             </ReanimatedAnimated.View>
           </View>
 
-          {agentId && !isArchivingCurrentAgent && !agent?.archivedAt ? (
+          {agentId && !isArchivingCurrentAgent && !agentState.archivedAt ? (
             <AgentInputArea
               agentId={agentId}
               serverId={serverId}
@@ -832,7 +809,7 @@ function AgentPanelBody({
                 streamViewRef.current?.scrollToBottom("message-sent");
               }}
             />
-          ) : agentId && agent?.archivedAt ? (
+          ) : agentId && agentState.archivedAt ? (
             <ArchivedAgentCallout serverId={serverId} agentId={agentId} />
           ) : null}
 

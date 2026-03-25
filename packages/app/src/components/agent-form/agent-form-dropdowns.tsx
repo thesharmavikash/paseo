@@ -537,14 +537,10 @@ export function AgentConfigRow({
   }, [modeOptions]);
 
   const modelSelectOptions: ComboSelectOption[] = useMemo(() => {
-    const opts: ComboSelectOption[] = [{ id: "", label: "Auto" }];
-    for (const model of models) {
-      opts.push({
-        id: model.id,
-        label: model.label,
-      });
-    }
-    return opts;
+    return models.map((model) => ({
+      id: model.id,
+      label: model.label,
+    }));
   }, [models]);
 
   const thinkingSelectOptions: ComboSelectOption[] = useMemo(
@@ -586,7 +582,7 @@ export function AgentConfigRow({
           title="Select model"
           value={selectedModel}
           options={modelSelectOptions}
-          placeholder="Auto"
+          placeholder={isModelLoading ? "Loading..." : "Select model"}
           disabled={disabled}
           isLoading={isModelLoading}
           onSelect={onSelectModel}
@@ -777,10 +773,8 @@ export function ModelDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const anchorRef = useRef<View>(null);
 
-  const selectedLabel = selectedModel
-    ? (models.find((model) => model.id === selectedModel)?.label ?? selectedModel)
-    : "Automatic";
-  const placeholder = isLoading && models.length === 0 ? "Loading..." : "Automatic";
+  const selectedLabel = models.find((model) => model.id === selectedModel)?.label ?? selectedModel ?? "Select model";
+  const placeholder = isLoading && models.length === 0 ? "Loading..." : "Select model";
   const helperText = error
     ? undefined
     : isLoading
@@ -790,34 +784,20 @@ export function ModelDropdown({
         : undefined;
 
   const options = useMemo(() => {
-    const opts: ComboSelectOption[] = [
-      {
-        id: "",
-        label: "Automatic (provider default)",
-        description: "Let the assistant pick the recommended model.",
-      },
-    ];
-    for (const model of models) {
-      opts.push({
-        id: model.id,
-        label: model.label,
-        description: model.description,
-      });
-    }
-    return opts;
+    return models.map((model) => ({
+      id: model.id,
+      label: model.label,
+      description: model.description,
+    }));
   }, [models]);
 
   const handleOpen = useCallback(() => setIsOpen(true), []);
   const handleOpenChange = useCallback((open: boolean) => setIsOpen(open), []);
   const handleSelect = useCallback(
     (id: string) => {
-      if (id === "") {
-        onClear();
-      } else {
-        onSelect(id);
-      }
+      onSelect(id);
     },
-    [onClear, onSelect],
+    [onSelect],
   );
 
   return (

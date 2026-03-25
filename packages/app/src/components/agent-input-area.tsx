@@ -1,6 +1,7 @@
 import { View, Pressable, Text, ActivityIndicator, Platform } from "react-native";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, UnistylesRuntime, useUnistyles } from "react-native-unistyles";
+import { useShallow } from "zustand/shallow";
 import { ArrowUp, Square, Pencil, AudioLines } from "lucide-react-native";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -126,7 +127,14 @@ export function AgentInputArea({
       agentDirectoryStatus === "revalidating" ||
       agentDirectoryStatus === "error_after_ready");
 
-  const agent = useSessionStore((state) => state.sessions[serverId]?.agents?.get(agentId));
+  const agentState = useSessionStore(
+    useShallow((state) => {
+      const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+      return {
+        status: agent?.status ?? null,
+      };
+    }),
+  );
 
   const queuedMessagesRaw = useSessionStore((state) =>
     state.sessions[serverId]?.queuedMessages?.get(agentId),
@@ -272,41 +280,8 @@ export function AgentInputArea({
     onSubmitMessageRef.current = onSubmitMessage;
   }, [onSubmitMessage]);
 
-  const isAgentRunning = agent?.status === "running";
-  const agentUpdatedAtMs = agent?.updatedAt?.getTime() ?? 0;
-
-  const prevIsAgentRunningRef = useRef(isAgentRunning);
-  const latestAgentUpdatedAtRef = useRef(agentUpdatedAtMs);
-  useEffect(() => {
-    const previousUpdatedAt = latestAgentUpdatedAtRef.current;
-    if (agentUpdatedAtMs < previousUpdatedAt) {
-      if (isProcessing && !isAgentRunning) {
-        prevIsAgentRunningRef.current = false;
-        setIsProcessing(false);
-      }
-      return;
-    }
-
-    const wasRunning = prevIsAgentRunningRef.current;
-    let shouldClearProcessing = false;
-
-    if (isProcessing) {
-      const hasEnteredRunning = !wasRunning && isAgentRunning;
-      const hasFreshRunningUpdateWhileRunning =
-        wasRunning && isAgentRunning && agentUpdatedAtMs > previousUpdatedAt;
-      const hasStoppedRunning = wasRunning && !isAgentRunning;
-
-      shouldClearProcessing =
-        hasEnteredRunning || hasFreshRunningUpdateWhileRunning || hasStoppedRunning;
-    }
-
-    prevIsAgentRunningRef.current = isAgentRunning;
-    latestAgentUpdatedAtRef.current = agentUpdatedAtMs;
-
-    if (shouldClearProcessing) {
-      setIsProcessing(false);
-    }
-  }, [agentUpdatedAtMs, isAgentRunning, isProcessing]);
+  const isAgentRunning = agentState.status === "running";
+  const hasAgent = agentState.status !== null;
 
   const updateQueue = useCallback(
     (updater: (current: QueuedMessage[]) => QueuedMessage[]) => {
@@ -348,7 +323,7 @@ export function AgentInputArea({
       message,
       imageAttachments,
       forceSend,
-      isAgentRunning: agent?.status === "running",
+      isAgentRunning: agentState.status === "running",
       // Parent-managed submits are still valid submit paths even when the
       // transport is disconnected, because the parent decides the failure mode.
       canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
@@ -481,7 +456,7 @@ export function AgentInputArea({
   });
 
   function handleCancelAgent() {
-    if (!agent || agent.status !== "running" || isCancellingAgent) {
+    if (!isAgentRunning || isCancellingAgent) {
       return;
     }
     if (!isConnected || !client) {
@@ -495,7 +470,7 @@ export function AgentInputArea({
   const isVoiceModeForAgent = voice?.isVoiceModeForAgent(serverId, agentId) ?? false;
 
   const handleToggleRealtimeVoice = useCallback(() => {
-    if (!voice || !isConnected || !agent) {
+    if (!voice || !isConnected || !hasAgent) {
       return;
     }
     if (voice.isVoiceSwitching) {
@@ -512,7 +487,7 @@ export function AgentInputArea({
         toast.error(message);
       }
     });
-  }, [agent, agentId, isConnected, serverId, toast, voice]);
+  }, [agentId, hasAgent, isConnected, serverId, toast, voice]);
 
   function handleEditQueuedMessage(id: string) {
     const item = queuedMessages.find((q) => q.id === id);
@@ -604,7 +579,7 @@ export function AgentInputArea({
 
   const rightContent = (
     <View style={styles.rightControls}>
-      {!isVoiceModeForAgent && agent ? (
+      {!isVoiceModeForAgent && hasAgent ? (
         <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
           <TooltipTrigger
             onPress={handleToggleRealtimeVoice}

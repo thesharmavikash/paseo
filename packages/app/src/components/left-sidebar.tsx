@@ -556,7 +556,7 @@ function MobileSidebar({
                     >
                       {({ hovered }) => (
                         <Plus
-                          size={theme.iconSize.lg}
+                          size={theme.iconSize.md}
                           color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
                         />
                       )}
@@ -581,7 +581,7 @@ function MobileSidebar({
                 >
                   {({ hovered }) => (
                     <Settings
-                      size={theme.iconSize.lg}
+                      size={theme.iconSize.md}
                       color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
                     />
                   )}
@@ -736,7 +736,7 @@ function DesktopSidebar({
               >
                 {({ hovered }) => (
                   <Plus
-                    size={theme.iconSize.lg}
+                    size={theme.iconSize.md}
                     color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
                   />
                 )}
@@ -761,7 +761,7 @@ function DesktopSidebar({
           >
             {({ hovered }) => (
               <Settings
-                size={theme.iconSize.lg}
+                size={theme.iconSize.md}
                 color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
               />
             )}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import type { WorkspaceDescriptorPayload } from "@server/shared/messages";
 import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
@@ -20,6 +21,8 @@ export interface SidebarWorkspaceEntry {
   activityAt: Date | null;
   statusBucket: SidebarStateBucket;
   diffStat: { additions: number; deletions: number } | null;
+  services: WorkspaceDescriptor["services"];
+  hasRunningServices: boolean;
 }
 
 export interface SidebarProjectEntry {
@@ -135,6 +138,8 @@ export function buildSidebarProjectsFromWorkspaces(input: {
       activityAt: workspace.activityAt,
       statusBucket: workspace.status,
       diffStat: workspace.diffStat,
+      services: workspace.services,
+      hasRunningServices: workspace.services.some((service) => service.status === "running"),
     };
 
     project.workspaces.push(row);
@@ -257,8 +262,12 @@ function toWorkspaceDescriptor(payload: {
   name: string;
   status: WorkspaceDescriptor["status"];
   activityAt: string | null;
+  services?: WorkspaceDescriptorPayload["services"];
 }): WorkspaceDescriptor {
-  return normalizeWorkspaceDescriptor(payload);
+  return normalizeWorkspaceDescriptor({
+    ...payload,
+    services: payload.services ?? [],
+  });
 }
 
 export function useSidebarWorkspacesList(options?: {

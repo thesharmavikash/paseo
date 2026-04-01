@@ -36,6 +36,7 @@ import type {
   ProjectIconResponse,
   OpenProjectResponseMessage,
   ArchiveWorkspaceResponseMessage,
+  WorkspaceSetupStatusResponseMessage,
   ListCommandsResponse,
   ListProviderModelsResponseMessage,
   ListAvailableProvidersResponse,
@@ -462,6 +463,7 @@ export type InspectScheduleOptions = {
 };
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
 type ArchiveWorkspacePayload = ArchiveWorkspaceResponseMessage["payload"];
+type WorkspaceSetupStatusPayload = WorkspaceSetupStatusResponseMessage["payload"];
 
 export type FetchAgentResult = {
   agent: AgentSnapshotPayload;
@@ -1314,6 +1316,21 @@ export class DaemonClient {
         workspaceId,
       },
       responseType: "archive_workspace_response",
+      timeout: 10000,
+    });
+  }
+
+  async fetchWorkspaceSetupStatus(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<WorkspaceSetupStatusPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "workspace_setup_status_request",
+        workspaceId,
+      },
+      responseType: "workspace_setup_status_response",
       timeout: 10000,
     });
   }

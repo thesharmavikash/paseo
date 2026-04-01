@@ -1,5 +1,6 @@
-import { CheckCircle2, CircleAlert, SquareTerminal } from "lucide-react-native";
-import { ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from "react-native";
 import invariant from "tiny-invariant";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Fonts } from "@/constants/theme";
@@ -7,6 +8,7 @@ import { usePaneContext } from "@/panels/pane-context";
 import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
 import { buildWorkspaceTabPersistenceKey } from "@/stores/workspace-tabs-store";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 
 function useSetupPanelDescriptor(
   target: { kind: "setup"; workspaceId: string },
@@ -47,27 +49,43 @@ function useSetupPanelDescriptor(
   };
 }
 
-function formatCommandStatus(status: "running" | "completed" | "failed"): string {
+type CommandStatus = "running" | "completed" | "failed";
+
+function CommandStatusIcon({ status }: { status: CommandStatus }) {
+  const { theme } = useUnistyles();
+
   if (status === "running") {
-    return "Running";
+    return <ActivityIndicator size={14} color={theme.colors.foreground} />;
   }
   if (status === "completed") {
-    return "Completed";
+    return <CheckCircle2 size={14} color={theme.colors.palette.green[500]} />;
   }
-  return "Failed";
+  return <CircleAlert size={14} color={theme.colors.palette.red[500]} />;
 }
 
-function formatSetupStatus(status: "running" | "completed" | "failed" | null): string {
-  if (status === "running") {
-    return "Running";
-  }
-  if (status === "completed") {
-    return "Completed";
-  }
-  if (status === "failed") {
-    return "Failed";
-  }
-  return "Waiting for setup output";
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+/**
+ * Process carriage returns in log text so progress-bar output renders cleanly.
+ * Splits on \r, keeps only the last segment per CR-delimited group (unless followed by \n).
+ */
+function processCarriageReturns(text: string): string {
+  if (!text.includes("\r")) return text;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!line.includes("\r")) return line;
+      const segments = line.split("\r");
+      return segments[segments.length - 1];
+    })
+    .join("\n");
 }
 
 function SetupPanel() {
@@ -75,113 +93,233 @@ function SetupPanel() {
   const { serverId, target } = usePaneContext();
   invariant(target.kind === "setup", "SetupPanel requires setup target");
 
+  const client = useHostRuntimeClient(serverId);
   const key = buildWorkspaceTabPersistenceKey({
     serverId,
     workspaceId: target.workspaceId,
   });
   const snapshot = useWorkspaceSetupStore((state) => (key ? state.snapshots[key] ?? null : null));
+  const upsertProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
+
+  // On mount, if no snapshot in the store, request cached status from server
+  const requestedRef = useRef(false);
+  useEffect(() => {
+    if (snapshot || requestedRef.current || !client) return;
+    requestedRef.current = true;
+    client
+      .fetchWorkspaceSetupStatus(target.workspaceId)
+      .then((response) => {
+        if (response.snapshot) {
+          upsertProgress({
+            serverId,
+            payload: { workspaceId: response.workspaceId, ...response.snapshot },
+          });
+        }
+      })
+      .catch(() => {
+        // Server may not support this yet — ignore
+      });
+  }, [client, snapshot, serverId, target.workspaceId, upsertProgress]);
 
   const commands = snapshot?.detail.commands ?? [];
   const log = snapshot?.detail.log ?? "";
-  const statusLabel = formatSetupStatus(snapshot?.status ?? null);
   const hasNoSetupCommands =
     snapshot?.status === "completed" && commands.length === 0 && log.trim().length === 0;
+  const isWaiting = !snapshot || (snapshot.status === "running" && commands.length === 0);
+
+  const [expandedIndices, setExpandedIndices] = useState<Set<number>>(new Set());
+  const [manuallyCollapsed, setManuallyCollapsed] = useState<Set<number>>(new Set());
+
+  const toggleExpanded = useCallback((index: number, isAutoExpanded: boolean) => {
+    setExpandedIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(index) || isAutoExpanded) {
+        next.delete(index);
+        // If this was auto-expanded, record that the user manually collapsed it
+        if (isAutoExpanded) {
+          setManuallyCollapsed((mc) => new Set(mc).add(index));
+        }
+      } else {
+        next.add(index);
+        // If the user re-expands, remove from manually collapsed
+        setManuallyCollapsed((mc) => {
+          const next = new Set(mc);
+          next.delete(index);
+          return next;
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  // Determine which command should auto-expand (running or last completed).
+  const autoExpandIndex = (() => {
+    const running = commands.find((c) => c.status === "running");
+    if (running) return running.index;
+    if (commands.length > 0) return commands[commands.length - 1].index;
+    return null;
+  })();
+
+  const statusLabel = snapshot?.status === "running"
+    ? "Running"
+    : snapshot?.status === "completed"
+      ? "Completed"
+      : snapshot?.status === "failed"
+        ? "Failed"
+        : "Waiting for setup output";
 
   return (
-    <View style={styles.container} testID="workspace-setup-panel">
-      <View
-        style={styles.header}
-        accessible
-        accessibilityLabel={`Workspace setup status: ${statusLabel}`}
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+      testID="workspace-setup-panel"
+    >
+      {/* Hidden element for status — preserves testID for E2E */}
+      <Text
+        style={styles.hiddenStatus}
         testID="workspace-setup-status"
-      >
-        <Text style={styles.title}>Workspace setup</Text>
-        <View
-          style={[
-            styles.statusBadge,
-            snapshot?.status === "completed" && {
-              backgroundColor: theme.colors.palette.green[100],
-            },
-            snapshot?.status === "failed" && {
-              backgroundColor: theme.colors.palette.red[100],
-            },
-          ]}
-        >
+      >{statusLabel}</Text>
+
+      {isWaiting ? (
+        <View style={styles.waitingContainer}>
+          <ActivityIndicator size="large" color={theme.colors.foregroundMuted} />
+          <Text style={styles.waitingText}>Setting up workspace...</Text>
+        </View>
+      ) : hasNoSetupCommands ? (
+        <View style={styles.emptyContainer}>
           <Text
-            style={[
-              styles.statusBadgeText,
-              snapshot?.status === "completed" && {
-                color: theme.colors.palette.green[600],
-              },
-              snapshot?.status === "failed" && {
-                color: theme.colors.palette.red[600],
-              },
-            ]}
+            style={styles.emptyText}
+            accessible
+            accessibilityLabel="No setup commands ran for this workspace"
           >
-            {statusLabel}
+            No setup commands ran for this workspace.
           </Text>
         </View>
-      </View>
+      ) : (
+        <View style={styles.commandList}>
+          {commands.map((command) => {
+            const isExpanded = expandedIndices.has(command.index);
+            const hasError = command.status === "failed" && snapshot?.error;
 
-      {snapshot?.error ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>Setup error</Text>
-          <Text selectable style={styles.errorBody}>
-            {snapshot.error}
-          </Text>
-        </View>
-      ) : null}
+            // Per-command log: use command.log if available, fall back to detail.log for the auto-expand target
+            const commandLog = (() => {
+              if ("log" in command && typeof command.log === "string") {
+                return command.log;
+              }
+              // Fallback: show detail.log on the auto-expand target command
+              if (command.index === autoExpandIndex) return log;
+              return "";
+            })();
+            const hasLog = commandLog.trim().length > 0;
 
-      {commands.length > 0 ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Commands</Text>
-          <View style={styles.commandList}>
-            {commands.map((command) => (
-              <View key={`${command.index}:${command.command}`} style={styles.commandRow}>
-                <Text style={styles.commandIndex}>{command.index}.</Text>
-                <View style={styles.commandTextColumn}>
-                  <Text selectable style={styles.commandText}>
+            // All non-running commands are expandable (completed/failed)
+            const isExpandable = command.status !== "running" || hasLog || !!hasError;
+
+            // Auto-expand the active command unless the user manually collapsed it
+            const isAutoExpanded =
+              command.index === autoExpandIndex && !manuallyCollapsed.has(command.index);
+            const showDetail = isExpanded || isAutoExpanded;
+
+            const processedLog = hasLog ? processCarriageReturns(commandLog) : "";
+
+            return (
+              <View key={`${command.index}:${command.command}`} style={styles.commandItem}>
+                <Pressable
+                  onPress={() => toggleExpanded(command.index, isAutoExpanded)}
+                  style={({ pressed }) => [
+                    styles.commandRow,
+                    showDetail && styles.commandRowExpanded,
+                    pressed && styles.commandRowPressed,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showDetail }}
+                >
+                  <View style={styles.commandStatusIcon}>
+                    <CommandStatusIcon status={command.status} />
+                  </View>
+                  <Text style={styles.commandText} numberOfLines={1}>
                     {command.command}
                   </Text>
-                  <Text style={styles.commandMeta}>
-                    {formatCommandStatus(command.status)}
-                    {typeof command.exitCode === "number" ? ` · exit ${command.exitCode}` : ""}
-                  </Text>
-                </View>
+                  {command.durationMs != null ? (
+                    <Text style={styles.commandDuration}>
+                      {formatDuration(command.durationMs)}
+                    </Text>
+                  ) : null}
+                  <ChevronRight
+                    size={14}
+                    color={theme.colors.foregroundMuted}
+                    style={[
+                      styles.chevron,
+                      showDetail && styles.chevronExpanded,
+                    ]}
+                  />
+                </Pressable>
+                {showDetail ? (
+                  <View style={styles.commandDetail}>
+                    {hasLog ? (
+                      <ScrollView
+                        style={styles.logScroll}
+                        contentContainerStyle={styles.logScrollContent}
+                        horizontal={false}
+                        showsVerticalScrollIndicator
+                        testID="workspace-setup-log"
+                        accessible
+                        accessibilityLabel="Workspace setup log"
+                      >
+                        <Text selectable style={styles.logText}>
+                          {processedLog}
+                        </Text>
+                      </ScrollView>
+                    ) : (
+                      <View
+                        style={styles.logScrollContent}
+                        testID="workspace-setup-log"
+                        accessible
+                        accessibilityLabel="Workspace setup log"
+                      >
+                        <Text style={styles.emptyLogText}>No output</Text>
+                      </View>
+                    )}
+                    {hasError ? (
+                      <View style={styles.errorCard}>
+                        <Text selectable style={styles.errorText}>
+                          {snapshot.error}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
+            );
+          })}
 
-      <View style={styles.sectionFill}>
-        <Text style={styles.sectionTitle}>Log</Text>
-        {hasNoSetupCommands ? (
-          <View style={styles.emptyCard}>
-            <Text
-              style={styles.emptyText}
+          {/* If there's log but no commands yet, or log without a target command, show standalone */}
+          {commands.length === 0 && log.trim().length > 0 ? (
+            <ScrollView
+              style={styles.logScroll}
+              contentContainerStyle={styles.logScrollContent}
+              showsVerticalScrollIndicator
+              testID="workspace-setup-log"
               accessible
-              accessibilityLabel="No setup commands ran for this workspace"
+              accessibilityLabel="Workspace setup log"
             >
-              No setup commands ran for this workspace.
-            </Text>
-          </View>
-        ) : (
-          <ScrollView
-            style={styles.logContainer}
-            contentContainerStyle={styles.logContent}
-            showsVerticalScrollIndicator
-            testID="workspace-setup-log"
-            accessible
-            accessibilityLabel="Workspace setup log"
-          >
-            <Text selectable style={styles.logText}>
-              {log.trim().length > 0 ? log : "Waiting for setup output..."}
-            </Text>
-          </ScrollView>
-        )}
-      </View>
-    </View>
+              <Text selectable style={styles.logText}>
+                {log}
+              </Text>
+            </ScrollView>
+          ) : null}
+
+          {/* Show error at top level if no commands failed but there's a setup error */}
+          {snapshot?.error && !commands.some((c) => c.status === "failed") ? (
+            <View style={styles.errorCard}>
+              <Text selectable style={styles.errorText}>
+                {snapshot.error}
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
@@ -195,100 +333,93 @@ const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     minHeight: 0,
-    padding: theme.spacing[4],
-    gap: theme.spacing[4],
     backgroundColor: theme.colors.surface0,
   },
-  header: {
-    flexDirection: "row",
+  contentContainer: {
+    padding: theme.spacing[4],
+    flexGrow: 1,
+  },
+  hiddenStatus: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    overflow: "hidden",
+    opacity: 0,
+  },
+  waitingContainer: {
+    flex: 1,
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
     gap: theme.spacing[3],
   },
-  title: {
-    fontSize: theme.fontSize.lg,
-    fontWeight: "600",
-    color: theme.colors.foreground,
-  },
-  statusBadge: {
-    borderRadius: theme.borderRadius.full,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
-    backgroundColor: theme.colors.surface2,
-  },
-  statusBadgeText: {
+  waitingText: {
     fontSize: theme.fontSize.sm,
-    fontWeight: "600",
     color: theme.colors.foregroundMuted,
   },
-  errorCard: {
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: 1,
-    borderColor: theme.colors.palette.red[200],
-    backgroundColor: theme.colors.palette.red[100],
-    padding: theme.spacing[3],
-    gap: theme.spacing[2],
-  },
-  errorTitle: {
-    fontSize: theme.fontSize.sm,
-    fontWeight: "600",
-    color: theme.colors.palette.red[800],
-  },
-  errorBody: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.palette.red[800],
-  },
-  section: {
-    gap: theme.spacing[2],
-  },
-  sectionFill: {
+  emptyContainer: {
     flex: 1,
-    minHeight: 0,
-    gap: theme.spacing[2],
+    alignItems: "center",
+    justifyContent: "center",
   },
-  sectionTitle: {
+  emptyText: {
     fontSize: theme.fontSize.sm,
-    fontWeight: "600",
     color: theme.colors.foregroundMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   commandList: {
     gap: theme.spacing[2],
   },
+  commandItem: {
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    overflow: "hidden",
+  },
   commandRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    alignItems: "center",
     gap: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     backgroundColor: theme.colors.surface1,
-    padding: theme.spacing[3],
   },
-  commandIndex: {
+  commandRowExpanded: {
+    borderBottomWidth: theme.borderWidth[1],
+    borderBottomColor: theme.colors.border,
+  },
+  commandRowPressed: {
+    opacity: 0.8,
+  },
+  commandStatusIcon: {
     width: 18,
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
-  },
-  commandTextColumn: {
-    flex: 1,
-    gap: theme.spacing[1],
+    height: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
   },
   commandText: {
+    flex: 1,
     fontFamily: Fonts.mono,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foreground,
   },
-  commandMeta: {
+  commandDuration: {
     fontSize: theme.fontSize.xs,
     color: theme.colors.foregroundMuted,
+    flexShrink: 0,
   },
-  logContainer: {
-    flex: 1,
-    minHeight: 0,
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface1,
+  chevron: {
+    flexShrink: 0,
   },
-  logContent: {
+  chevronExpanded: {
+    transform: [{ rotate: "90deg" }],
+  },
+  commandDetail: {
+    backgroundColor: theme.colors.surface0,
+  },
+  logScroll: {
+    maxHeight: 400,
+  },
+  logScrollContent: {
     padding: theme.spacing[3],
   },
   logText: {
@@ -297,13 +428,17 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 20,
     color: theme.colors.foreground,
   },
-  emptyCard: {
-    borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface1,
-    padding: theme.spacing[3],
-  },
-  emptyText: {
+  emptyLogText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+    fontStyle: "italic",
+  },
+  errorCard: {
+    padding: theme.spacing[3],
+    backgroundColor: theme.colors.palette.red[100],
+  },
+  errorText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.palette.red[800],
   },
 }));

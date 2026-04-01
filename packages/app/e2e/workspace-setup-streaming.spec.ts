@@ -66,15 +66,18 @@ test.describe("Workspace setup streaming", () => {
       await expectSetupLogContains(page, "setup complete");
 
       await waitForWorkspaceTabsVisible(page);
+      await page.getByTestId("workspace-new-agent-tab").first().click();
       await expect(page.getByRole("textbox", { name: "Message agent..." }).first()).toBeVisible({
         timeout: 30_000,
       });
 
       const explorerToggle = page.getByTestId("workspace-explorer-toggle").first();
-      if ((await explorerToggle.getAttribute("aria-expanded")) !== "true") {
+      if ((await explorerToggle.getAttribute("aria-label")) === "Open explorer") {
         await explorerToggle.click();
       }
-      await expect(explorerToggle).toHaveAttribute("aria-expanded", "true", { timeout: 30_000 });
+      await expect(explorerToggle).toHaveAttribute("aria-label", "Close explorer", {
+        timeout: 30_000,
+      });
       await page.getByTestId("explorer-tab-files").click();
       await expect(page.getByTestId("file-explorer-tree-scroll")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText("README.md", { exact: true }).first()).toBeVisible({
@@ -189,6 +192,98 @@ test.describe("Workspace setup streaming", () => {
       expect(completedPayload.error).toBeNull();
       expect(completedPayload.detail.commands).toEqual([]);
       expect(completedPayload.detail.log).toBe("");
+    } finally {
+      await client.close();
+      await repo.cleanup();
+    }
+  });
+
+  test("launches service terminals after setup completes", async ({ page }) => {
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("setup-svc-ui-", {
+      paseoConfig: {
+        worktree: {
+          setup: ["sh -c 'echo bootstrapping; sleep 1; echo setup complete'"],
+        },
+        services: {
+          web: {
+            command:
+              "node -e \"const http = require('http'); const s = http.createServer((q,r) => r.end('ok')); s.listen(process.env.PORT || 3000, () => console.log('listening on ' + s.address().port))\"",
+          },
+        },
+      },
+    });
+
+    try {
+      await seedProjectForWorkspaceSetup(client, repo.path);
+      await openHomeWithProject(page, repo.path);
+      await createWorkspaceFromSidebar(page, repo.path);
+
+      await expectSetupPanel(page);
+      await expectSetupStatus(page, "Completed");
+
+      await waitForWorkspaceTabsVisible(page);
+
+      // Wait for the service terminal tab to appear in the tabs bar
+      const terminalTab = page.locator('[data-testid^="workspace-tab-terminal_"]', {
+        hasText: "web",
+      });
+      await expect(terminalTab).toBeVisible({ timeout: 30_000 });
+
+      // Click the service terminal tab
+      await terminalTab.click();
+
+      // Verify the terminal surface rendered
+      await expect(page.getByTestId("terminal-surface").first()).toBeVisible({ timeout: 10_000 });
+
+      // Verify the terminal output contains "listening on" (xterm renders text in .xterm-rows)
+      await expect(page.locator(".xterm-rows").first()).toContainText("listening on", {
+        timeout: 30_000,
+      });
+    } finally {
+      await client.close();
+      await repo.cleanup();
+    }
+  });
+
+  test("launches workspace services after setup completes", async () => {
+    const client = await connectWorkspaceSetupClient();
+    const repo = await createTempGitRepo("setup-services-", {
+      paseoConfig: {
+        worktree: {
+          setup: ["sh -c 'echo bootstrapping; sleep 1; echo setup complete'"],
+        },
+        services: {
+          editor: {
+            command: "npm run dev",
+          },
+        },
+      },
+    });
+
+    try {
+      await seedProjectForWorkspaceSetup(client, repo.path);
+      const completed = waitForWorkspaceSetupProgress(
+        client,
+        (payload) => payload.status === "completed" && payload.detail.log.includes("setup complete"),
+      );
+
+      const workspace = await createWorkspaceThroughDaemon(client, {
+        cwd: repo.path,
+        worktreeSlug: "workspace-setup-services",
+      });
+
+      await completed;
+
+      await expect
+        .poll(async () => {
+          const terminals = await client.listTerminals(workspace.id);
+          return terminals.terminals.find((terminal) => terminal.name === "editor") ?? null;
+        })
+        .toMatchObject({
+          id: expect.any(String),
+          name: "editor",
+        });
     } finally {
       await client.close();
       await repo.cleanup();

@@ -28,9 +28,14 @@ function closeServer(server: http.Server): Promise<void> {
 // ---------------------------------------------------------------------------
 
 describe("ServiceRouteStore", () => {
-  it("addRoute and findRoute with exact match", () => {
+  it("registerRoute and findRoute with exact match", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("editor.localhost", 3000);
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
 
     const route = store.findRoute("editor.localhost");
     expect(route).toEqual({ hostname: "editor.localhost", port: 3000 });
@@ -38,7 +43,12 @@ describe("ServiceRouteStore", () => {
 
   it("findRoute strips port from host header", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("editor.localhost", 3000);
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
 
     const route = store.findRoute("editor.localhost:6767");
     expect(route).toEqual({ hostname: "editor.localhost", port: 3000 });
@@ -46,25 +56,132 @@ describe("ServiceRouteStore", () => {
 
   it("findRoute subdomain match", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("editor.localhost", 3000);
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
 
     const route = store.findRoute("fix-auth.editor.localhost");
     expect(route).toEqual({ hostname: "editor.localhost", port: 3000 });
   });
 
+  it("listRoutes returns enriched entries", () => {
+    const store = new ServiceRouteStore();
+    store.registerRoute({
+      hostname: "a.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "web",
+    });
+    store.registerRoute({
+      hostname: "b.localhost",
+      port: 4000,
+      workspaceId: "/repo/.paseo/worktrees/feature-b",
+      serviceName: "docs",
+    });
+
+    const routes = store.listRoutes();
+    expect(routes).toHaveLength(2);
+    expect(routes).toContainEqual({
+      hostname: "a.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "web",
+    });
+    expect(routes).toContainEqual({
+      hostname: "b.localhost",
+      port: 4000,
+      workspaceId: "/repo/.paseo/worktrees/feature-b",
+      serviceName: "docs",
+    });
+  });
+
+  it("listRoutesForWorkspace returns only routes for that workspace", () => {
+    const store = new ServiceRouteStore();
+    store.registerRoute({
+      hostname: "a.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "web",
+    });
+    store.registerRoute({
+      hostname: "b.localhost",
+      port: 4000,
+      workspaceId: "/repo/.paseo/worktrees/feature-b",
+      serviceName: "docs",
+    });
+    store.registerRoute({
+      hostname: "c.localhost",
+      port: 5000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "api",
+    });
+
+    expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([
+      {
+        hostname: "a.localhost",
+        port: 3000,
+        workspaceId: "/repo/.paseo/worktrees/feature-a",
+        serviceName: "web",
+      },
+      {
+        hostname: "c.localhost",
+        port: 5000,
+        workspaceId: "/repo/.paseo/worktrees/feature-a",
+        serviceName: "api",
+      },
+    ]);
+  });
+
   it("removeRoute works", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("editor.localhost", 3000);
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
     store.removeRoute("editor.localhost");
 
     expect(store.findRoute("editor.localhost")).toBeNull();
   });
 
+  it("removeRoute cleans up workspace index", () => {
+    const store = new ServiceRouteStore();
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
+
+    store.removeRoute("editor.localhost");
+
+    expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([]);
+  });
+
   it("removeRoutesForPort works", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("a.localhost", 3000);
-    store.addRoute("b.localhost", 3000);
-    store.addRoute("c.localhost", 4000);
+    store.registerRoute({
+      hostname: "a.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "web",
+    });
+    store.registerRoute({
+      hostname: "b.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "api",
+    });
+    store.registerRoute({
+      hostname: "c.localhost",
+      port: 4000,
+      workspaceId: "/repo/.paseo/worktrees/feature-b",
+      serviceName: "docs",
+    });
 
     store.removeRoutesForPort(3000);
 
@@ -76,22 +193,36 @@ describe("ServiceRouteStore", () => {
     });
   });
 
-  it("findRoute returns null for unknown hosts", () => {
+  it("removeRoutesForPort cleans up workspace index", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("editor.localhost", 3000);
+    store.registerRoute({
+      hostname: "a.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "web",
+    });
+    store.registerRoute({
+      hostname: "b.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "api",
+    });
 
-    expect(store.findRoute("unknown.example.com")).toBeNull();
+    store.removeRoutesForPort(3000);
+
+    expect(store.listRoutesForWorkspace("/repo/.paseo/worktrees/feature-a")).toEqual([]);
   });
 
-  it("listRoutes returns all routes", () => {
+  it("findRoute returns null for unknown hosts", () => {
     const store = new ServiceRouteStore();
-    store.addRoute("a.localhost", 3000);
-    store.addRoute("b.localhost", 4000);
+    store.registerRoute({
+      hostname: "editor.localhost",
+      port: 3000,
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      serviceName: "editor",
+    });
 
-    const routes = store.listRoutes();
-    expect(routes).toHaveLength(2);
-    expect(routes).toContainEqual({ hostname: "a.localhost", port: 3000 });
-    expect(routes).toContainEqual({ hostname: "b.localhost", port: 4000 });
+    expect(store.findRoute("unknown.example.com")).toBeNull();
   });
 });
 

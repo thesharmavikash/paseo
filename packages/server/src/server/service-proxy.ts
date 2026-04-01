@@ -29,21 +29,49 @@ export interface ServiceRoute {
   port: number;
 }
 
+export interface ServiceRouteEntry extends ServiceRoute {
+  workspaceId: string;
+  serviceName: string;
+}
+
 export class ServiceRouteStore {
-  private routes = new Map<string, number>();
+  private routes = new Map<string, ServiceRouteEntry>();
+  private workspaceHostnames = new Map<string, Set<string>>();
 
   addRoute(hostname: string, port: number): void {
-    this.routes.set(hostname, port);
+    this.registerRoute({
+      hostname,
+      port,
+      workspaceId: "",
+      serviceName: hostname,
+    });
+  }
+
+  registerRoute(entry: ServiceRouteEntry): void {
+    const previous = this.routes.get(entry.hostname);
+    if (previous) {
+      this.removeHostnameFromWorkspaceIndex(previous.workspaceId, previous.hostname);
+    }
+
+    const storedEntry = { ...entry };
+    this.routes.set(storedEntry.hostname, storedEntry);
+    this.addHostnameToWorkspaceIndex(storedEntry.workspaceId, storedEntry.hostname);
   }
 
   removeRoute(hostname: string): void {
+    const entry = this.routes.get(hostname);
+    if (!entry) {
+      return;
+    }
     this.routes.delete(hostname);
+    this.removeHostnameFromWorkspaceIndex(entry.workspaceId, hostname);
   }
 
   removeRoutesForPort(port: number): void {
-    for (const [hostname, p] of this.routes) {
-      if (p === port) {
+    for (const [hostname, entry] of this.routes) {
+      if (entry.port === port) {
         this.routes.delete(hostname);
+        this.removeHostnameFromWorkspaceIndex(entry.workspaceId, hostname);
       }
     }
   }
@@ -53,29 +81,60 @@ export class ServiceRouteStore {
     const hostname = host.replace(/:\d+$/, "");
 
     // 1. Exact match
-    const exactPort = this.routes.get(hostname);
-    if (exactPort !== undefined) {
-      return { hostname, port: exactPort };
+    const exactRoute = this.routes.get(hostname);
+    if (exactRoute !== undefined) {
+      return { hostname: exactRoute.hostname, port: exactRoute.port };
     }
 
     // 2. Subdomain match — walk up the labels looking for a registered parent
     const parts = hostname.split(".");
     for (let i = 1; i < parts.length; i++) {
       const candidate = parts.slice(i).join(".");
-      const candidatePort = this.routes.get(candidate);
-      if (candidatePort !== undefined) {
-        return { hostname: candidate, port: candidatePort };
+      const candidateRoute = this.routes.get(candidate);
+      if (candidateRoute !== undefined) {
+        return { hostname: candidateRoute.hostname, port: candidateRoute.port };
       }
     }
 
     return null;
   }
 
-  listRoutes(): ServiceRoute[] {
-    return Array.from(this.routes.entries()).map(([hostname, port]) => ({
-      hostname,
-      port,
-    }));
+  listRoutes(): ServiceRouteEntry[] {
+    return Array.from(this.routes.values()).map((entry) => ({ ...entry }));
+  }
+
+  listRoutesForWorkspace(workspaceId: string): ServiceRouteEntry[] {
+    const hostnames = this.workspaceHostnames.get(workspaceId);
+    if (!hostnames) {
+      return [];
+    }
+
+    const routes: ServiceRouteEntry[] = [];
+    for (const hostname of hostnames) {
+      const entry = this.routes.get(hostname);
+      if (entry) {
+        routes.push({ ...entry });
+      }
+    }
+    return routes;
+  }
+
+  private addHostnameToWorkspaceIndex(workspaceId: string, hostname: string): void {
+    const hostnames = this.workspaceHostnames.get(workspaceId) ?? new Set<string>();
+    hostnames.add(hostname);
+    this.workspaceHostnames.set(workspaceId, hostnames);
+  }
+
+  private removeHostnameFromWorkspaceIndex(workspaceId: string, hostname: string): void {
+    const hostnames = this.workspaceHostnames.get(workspaceId);
+    if (!hostnames) {
+      return;
+    }
+
+    hostnames.delete(hostname);
+    if (hostnames.size === 0) {
+      this.workspaceHostnames.delete(workspaceId);
+    }
   }
 }
 

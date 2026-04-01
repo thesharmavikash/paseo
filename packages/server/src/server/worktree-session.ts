@@ -11,6 +11,7 @@ import {
   type ProjectPlacementPayload,
   type SessionInboundMessage,
   type SessionOutboundMessage,
+  type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
 import type {
@@ -27,7 +28,6 @@ import {
   createWorktreeSetupProgressAccumulator,
   getWorktreeSetupProgressResults,
   spawnWorktreeServices,
-  type CreateAgentWorktreeResult,
 } from "./worktree-bootstrap.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceRouteStore } from "./service-proxy.js";
@@ -117,12 +117,18 @@ type CreatePaseoWorktreeInBackgroundDependencies = {
     cwd: string,
     options?: { dedupeGitState?: boolean },
   ) => Promise<void>;
+  cacheWorkspaceSetupSnapshot: (workspaceId: string, snapshot: WorkspaceSetupSnapshot) => void;
   emit: EmitSessionMessage;
   sessionLogger: Logger;
   terminalManager: TerminalManager | null;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   serviceRouteStore: ServiceRouteStore | null;
-  daemonPort: number | null;
+  daemonPort?: number | null;
+};
+
+type HandleWorkspaceSetupStatusRequestDependencies = {
+  emit: EmitSessionMessage;
+  workspaceSetupSnapshots: ReadonlyMap<string, WorkspaceSetupSnapshot>;
 };
 
 type HandleCreatePaseoWorktreeRequestDependencies = {
@@ -597,7 +603,7 @@ export async function handleCreatePaseoWorktreeRequest(
       throw new Error(`Invalid worktree name: ${validation.error}`);
     }
 
-    const worktreePath = await computeWorktreePath(repoRoot, normalizedSlug, dependencies.paseoHome);
+    await computeWorktreePath(repoRoot, normalizedSlug, dependencies.paseoHome);
     const createdWorktree = await createAgentWorktree({
       cwd: repoRoot,
       branchName: normalizedSlug,
@@ -645,6 +651,21 @@ export async function handleCreatePaseoWorktreeRequest(
   }
 }
 
+export async function handleWorkspaceSetupStatusRequest(
+  dependencies: HandleWorkspaceSetupStatusRequestDependencies,
+  request: Extract<SessionInboundMessage, { type: "workspace_setup_status_request" }>,
+): Promise<void> {
+  const workspaceId = normalizePersistedWorkspaceId(request.workspaceId);
+  dependencies.emit({
+    type: "workspace_setup_status_response",
+    payload: {
+      requestId: request.requestId,
+      workspaceId,
+      snapshot: dependencies.workspaceSetupSnapshots.get(workspaceId) ?? null,
+    },
+  });
+}
+
 export async function createPaseoWorktreeInBackground(
   dependencies: CreatePaseoWorktreeInBackgroundDependencies,
   options: {
@@ -658,20 +679,25 @@ export async function createPaseoWorktreeInBackground(
   let setupResults: WorktreeSetupCommandResult[] = [];
   let setupStarted = false;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
+  const workspaceId = normalizePersistedWorkspaceId(worktree.worktreePath);
 
   const emitSetupProgress = (status: "running" | "completed" | "failed", error: string | null) => {
+    const snapshot: WorkspaceSetupSnapshot = {
+      status,
+      detail: buildWorktreeSetupDetail({
+        worktree,
+        results:
+          status === "running" ? getWorktreeSetupProgressResults(progressAccumulator) : setupResults,
+        outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
+      }),
+      error,
+    };
+    dependencies.cacheWorkspaceSetupSnapshot(workspaceId, snapshot);
     dependencies.emit({
       type: "workspace_setup_progress",
       payload: {
-        workspaceId: normalizePersistedWorkspaceId(worktree.worktreePath),
-        status,
-        detail: buildWorktreeSetupDetail({
-          worktree,
-          results:
-            status === "running" ? getWorktreeSetupProgressResults(progressAccumulator) : setupResults,
-          outputAccumulatorsByIndex: progressAccumulator.outputAccumulatorsByIndex,
-        }),
-        error,
+        workspaceId,
+        ...snapshot,
       },
     });
   };
@@ -682,36 +708,35 @@ export async function createPaseoWorktreeInBackground(
 
       if (!options.shouldBootstrap) {
         emitSetupProgress("completed", null);
-        return;
-      }
-
-      const setupCommands = getWorktreeSetupCommands(worktree.worktreePath);
-      if (setupCommands.length === 0) {
-        setupStarted = true;
-        emitSetupProgress("completed", null);
       } else {
-        const runtimeEnv = await resolveWorktreeRuntimeEnv({
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
-          repoRootPath: options.repoRoot,
-        });
-        dependencies.terminalManager?.registerCwdEnv({
-          cwd: worktree.worktreePath,
-          env: runtimeEnv,
-        });
-        setupStarted = true;
-        setupResults = await runWorktreeSetupCommands({
-          worktreePath: worktree.worktreePath,
-          branchName: worktree.branchName,
-          cleanupOnFailure: false,
-          repoRootPath: options.repoRoot,
-          runtimeEnv,
-          onEvent: (event) => {
-            applyWorktreeSetupProgressEvent(progressAccumulator, event);
-            emitSetupProgress("running", null);
-          },
-        });
-        emitSetupProgress("completed", null);
+        const setupCommands = getWorktreeSetupCommands(worktree.worktreePath);
+        if (setupCommands.length === 0) {
+          setupStarted = true;
+          emitSetupProgress("completed", null);
+        } else {
+          const runtimeEnv = await resolveWorktreeRuntimeEnv({
+            worktreePath: worktree.worktreePath,
+            branchName: worktree.branchName,
+            repoRootPath: options.repoRoot,
+          });
+          dependencies.terminalManager?.registerCwdEnv({
+            cwd: worktree.worktreePath,
+            env: runtimeEnv,
+          });
+          setupStarted = true;
+          setupResults = await runWorktreeSetupCommands({
+            worktreePath: worktree.worktreePath,
+            branchName: worktree.branchName,
+            cleanupOnFailure: false,
+            repoRootPath: options.repoRoot,
+            runtimeEnv,
+            onEvent: (event) => {
+              applyWorktreeSetupProgressEvent(progressAccumulator, event);
+              emitSetupProgress("running", null);
+            },
+          });
+          emitSetupProgress("completed", null);
+        }
       }
     } catch (error) {
       if (error instanceof WorktreeSetupError) {
@@ -738,18 +763,14 @@ export async function createPaseoWorktreeInBackground(
       return;
     }
 
-    if (
-      !dependencies.terminalManager ||
-      !dependencies.serviceRouteStore ||
-      dependencies.daemonPort === null ||
-      dependencies.daemonPort === undefined
-    ) {
+    if (!dependencies.terminalManager || !dependencies.serviceRouteStore) {
       return;
     }
 
     try {
       await spawnWorktreeServices({
         repoRoot: worktree.worktreePath,
+        workspaceId: worktree.worktreePath,
         branchName: worktree.branchName,
         daemonPort: dependencies.daemonPort,
         routeStore: dependencies.serviceRouteStore,
@@ -757,8 +778,14 @@ export async function createPaseoWorktreeInBackground(
         logger: dependencies.sessionLogger,
       });
     } catch (error) {
-      dependencies.sessionLogger.warn(
-        { err: error, worktreePath: worktree.worktreePath },
+      dependencies.sessionLogger.error(
+        {
+          err: error,
+          cwd: options.requestCwd,
+          repoRoot: options.repoRoot,
+          worktreeSlug: worktree.branchName,
+          worktreePath: worktree.worktreePath,
+        },
         "Failed to spawn worktree services after workspace setup completed",
       );
     }

@@ -51,6 +51,7 @@ import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
+import { patchWorkspaceServices } from "@/contexts/session-workspace-services";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -1112,10 +1113,26 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       mergeWorkspaces(serverId, [normalizeWorkspaceDescriptor(message.payload.workspace)]);
     });
 
+    const unsubServiceStatusUpdate = client.on("service_status_update", (message) => {
+      if (message.type !== "service_status_update") return;
+      setWorkspaces(serverId, (prev) => patchWorkspaceServices(prev, message.payload));
+    });
+
     const unsubWorkspaceSetupProgress = client.on("workspace_setup_progress", (message) => {
       if (message.type !== "workspace_setup_progress") return;
       applyWorkspaceSetupProgress(message.payload);
     });
+
+    const unsubWorkspaceSetupStatusResponse = client.on(
+      "workspace_setup_status_response",
+      (message) => {
+        if (message.type !== "workspace_setup_status_response") return;
+        const { workspaceId, snapshot } = message.payload;
+        if (snapshot) {
+          applyWorkspaceSetupProgress({ workspaceId, ...snapshot });
+        }
+      },
+    );
 
     const unsubStatus = client.on("status", (message) => {
       if (message.type !== "status") return;
@@ -1465,7 +1482,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubAgentStream();
       unsubAgentTimeline();
       unsubWorkspaceUpdate();
+      unsubServiceStatusUpdate();
       unsubWorkspaceSetupProgress();
+      unsubWorkspaceSetupStatusResponse();
       unsubStatus();
       unsubPermissionRequest();
       unsubPermissionResolved();
@@ -1491,6 +1510,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     setAgentTimelineCursor,
     setInitializingAgents,
     setAgents,
+    setWorkspaces,
     mergeWorkspaces,
     removeWorkspace,
     removeWorkspaceSetup,

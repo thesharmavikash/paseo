@@ -19,6 +19,7 @@ function workspace(
     status: input.status ?? "done",
     activityAt: input.activityAt ?? null,
     diffStat: input.diffStat ?? null,
+    services: input.services ?? [],
   };
 }
 

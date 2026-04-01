@@ -28,6 +28,7 @@ import {
   type UnsubscribeCheckoutDiffRequest,
   type DirectorySuggestionsRequest,
   type ProjectPlacementPayload,
+  type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
   type WorkspaceStateBucket,
 } from "./messages.js";
@@ -62,6 +63,7 @@ import {
 import { experimental_createMCPClient } from "ai";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { VoiceCallerContext, VoiceMcpStdioConfig, VoiceSpeakHandler } from "./voice-types.js";
+import { buildWorkspaceServicePayloads } from "./service-status-projection.js";
 
 export type AgentMcpTransportFactory = () => Promise<Transport>;
 import { buildProviderRegistry } from "./agent/provider-registry.js";
@@ -180,6 +182,7 @@ import {
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
+  handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
   killTerminalsUnderPath as killWorktreeTerminalsUnderPath,
   registerPendingWorktreeWorkspace as registerPendingWorktreeWorkspaceSession,
 } from "./worktree-session.js";
@@ -375,6 +378,7 @@ export type SessionOptions = {
   terminalManager: TerminalManager | null;
   serviceRouteStore?: ServiceRouteStore;
   getDaemonTcpPort?: () => number | null;
+  resolveServiceStatus?: (hostname: string) => "running" | "stopped" | null;
   voice?: {
     voiceAgentMcpStdio?: VoiceMcpStdioConfig | null;
     turnDetection?: Resolvable<TurnDetectionProvider | null>;
@@ -572,6 +576,7 @@ export class Session {
   private readonly terminalManager: TerminalManager | null;
   private readonly serviceRouteStore: ServiceRouteStore | null;
   private readonly getDaemonTcpPort: (() => number | null) | null;
+  private readonly resolveServiceStatus: ((hostname: string) => "running" | "stopped" | null) | null;
   private readonly subscribedTerminalDirectories = new Set<string>();
   private unsubscribeTerminalsChanged: (() => void) | null = null;
   private terminalExitSubscriptions: Map<string, () => void> = new Map();
@@ -582,6 +587,7 @@ export class Session {
   private peakInflightRequests = 0;
   private readonly checkoutDiffSubscriptions = new Map<string, () => void>();
   private readonly workspaceGitWatchTargets = new Map<string, WorkspaceGitWatchTarget>();
+  private readonly workspaceSetupSnapshots = new Map<string, WorkspaceSetupSnapshot>();
   private readonly voiceAgentMcpStdio: VoiceMcpStdioConfig | null;
   private readonly registerVoiceSpeakHandler?: (
     agentId: string,
@@ -625,6 +631,7 @@ export class Session {
       terminalManager,
       serviceRouteStore,
       getDaemonTcpPort,
+      resolveServiceStatus,
       voice,
       voiceBridge,
       dictation,
@@ -651,6 +658,7 @@ export class Session {
     this.terminalManager = terminalManager;
     this.serviceRouteStore = serviceRouteStore ?? null;
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
+    this.resolveServiceStatus = resolveServiceStatus ?? null;
     if (this.terminalManager) {
       this.unsubscribeTerminalsChanged = this.terminalManager.subscribeTerminalsChanged((event) =>
         this.handleTerminalsChanged(event),
@@ -714,6 +722,10 @@ export class Session {
       inflightRequests: this.inflightRequests,
       peakInflightRequests: this.peakInflightRequests,
     };
+  }
+
+  public emitServerMessage(message: SessionOutboundMessage): void {
+    this.emit(message);
   }
 
   /**
@@ -1615,6 +1627,10 @@ export class Session {
 
         case "create_paseo_worktree_request":
           await this.handleCreatePaseoWorktreeRequest(msg);
+          break;
+
+        case "workspace_setup_status_request":
+          await this.handleWorkspaceSetupStatusRequest(msg);
           break;
 
         case "open_project_request":
@@ -4918,6 +4934,14 @@ export class Session {
       status: "done",
       activityAt: null,
       diffStat,
+      services: this.serviceRouteStore
+        ? buildWorkspaceServicePayloads(
+            this.serviceRouteStore,
+            workspace.workspaceId,
+            this.getDaemonTcpPort?.() ?? null,
+            this.resolveServiceStatus ?? undefined,
+          )
+        : [],
     };
   }
 
@@ -5565,6 +5589,9 @@ export class Session {
         paseoHome: this.paseoHome,
         emitWorkspaceUpdateForCwd: (cwd, emitOptions) =>
           this.emitWorkspaceUpdateForCwd(cwd, emitOptions),
+        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
+          this.workspaceSetupSnapshots.set(workspaceId, snapshot);
+        },
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
@@ -5573,6 +5600,18 @@ export class Session {
         daemonPort: this.getDaemonTcpPort?.() ?? null,
       },
       options,
+    );
+  }
+
+  private async handleWorkspaceSetupStatusRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace_setup_status_request" }>,
+  ): Promise<void> {
+    return handleWorkspaceSetupStatusRequestMessage(
+      {
+        emit: (message) => this.emit(message),
+        workspaceSetupSnapshots: this.workspaceSetupSnapshots,
+      },
+      request,
     );
   }
 

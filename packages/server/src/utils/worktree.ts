@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } f
 import { join, basename, dirname, resolve, sep } from "path";
 import net from "node:net";
 import { createHash } from "node:crypto";
+import * as pty from "node-pty";
 import { createNameId } from "mnemonic-id";
+import stripAnsi from "strip-ansi";
 import {
   normalizeBaseRefName,
   readPaseoWorktreeMetadata,
@@ -13,6 +15,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
+import { ensureNodePtySpawnHelperExecutableForCurrentPlatform } from "../terminal/terminal.js";
 
 interface PaseoConfig {
   worktree?: {
@@ -234,6 +237,56 @@ export function getServiceConfigs(repoRoot: string): Map<string, ServiceConfig> 
   return result;
 }
 
+export function processCarriageReturns(text: string): string {
+  if (!text.includes("\r")) {
+    return text;
+  }
+
+  const output: string[] = [];
+  let line: string[] = [];
+  let cursor = 0;
+
+  const flushLine = () => {
+    output.push(line.join(""));
+    line = [];
+    cursor = 0;
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (char === "\r") {
+      if (text[index + 1] === "\n") {
+        flushLine();
+        output.push("\n");
+        index += 1;
+        continue;
+      }
+      cursor = 0;
+      continue;
+    }
+
+    if (char === "\n") {
+      flushLine();
+      output.push("\n");
+      continue;
+    }
+
+    if (cursor < line.length) {
+      line[cursor] = char;
+    } else {
+      line.push(char);
+    }
+    cursor += 1;
+  }
+
+  if (line.length > 0) {
+    output.push(line.join(""));
+  }
+
+  return output.join("");
+}
+
 async function execSetupCommand(
   command: string,
   options: { cwd: string; env: NodeJS.ProcessEnv },
@@ -279,6 +332,27 @@ async function execSetupCommandStreamed(options: {
     const stderrChunks: string[] = [];
     let settled = false;
 
+    const emitOutput = (stream: "stdout" | "stderr", chunk: string) => {
+      const text = stripAnsi(chunk);
+      if (!text) {
+        return;
+      }
+      if (stream === "stdout") {
+        stdoutChunks.push(text);
+      } else {
+        stderrChunks.push(text);
+      }
+      options.onEvent?.({
+        type: "output",
+        index: options.index,
+        total: options.total,
+        command: options.command,
+        cwd: options.cwd,
+        stream,
+        chunk: text,
+      });
+    };
+
     const finish = (exitCode: number | null) => {
       if (settled) {
         return;
@@ -314,48 +388,52 @@ async function execSetupCommandStreamed(options: {
       cwd: options.cwd,
     });
 
-    const child = spawn("/bin/bash", ["-lc", options.command], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      const text = chunk.toString();
-      stdoutChunks.push(text);
-      options.onEvent?.({
-        type: "output",
-        index: options.index,
-        total: options.total,
-        command: options.command,
+    const spawnWithPipes = () => {
+      const child = spawn("/bin/bash", ["-lc", options.command], {
         cwd: options.cwd,
-        stream: "stdout",
-        chunk: text,
+        env: options.env,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    });
 
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      const text = chunk.toString();
-      stderrChunks.push(text);
-      options.onEvent?.({
-        type: "output",
-        index: options.index,
-        total: options.total,
-        command: options.command,
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        emitOutput("stdout", chunk.toString());
+      });
+
+      child.stderr?.on("data", (chunk: Buffer | string) => {
+        emitOutput("stderr", chunk.toString());
+      });
+
+      child.on("error", (error) => {
+        emitOutput("stderr", error instanceof Error ? error.message : String(error));
+        finish(null);
+      });
+
+      child.on("close", (code) => {
+        finish(typeof code === "number" ? code : null);
+      });
+    };
+
+    try {
+      ensureNodePtySpawnHelperExecutableForCurrentPlatform();
+      const terminal = pty.spawn("/bin/bash", ["-lc", options.command], {
         cwd: options.cwd,
-        stream: "stderr",
-        chunk: text,
+        env: options.env,
+        name: "xterm-color",
+        cols: 120,
+        rows: 30,
       });
-    });
 
-    child.on("error", (error) => {
-      stderrChunks.push(error instanceof Error ? error.message : String(error));
-      finish(null);
-    });
+      terminal.onData((data) => {
+        emitOutput("stdout", data);
+      });
 
-    child.on("close", (code) => {
-      finish(typeof code === "number" ? code : null);
-    });
+      terminal.onExit(({ exitCode }) => {
+        finish(typeof exitCode === "number" ? exitCode : null);
+      });
+    } catch (error) {
+      emitOutput("stderr", error instanceof Error ? error.message : String(error));
+      spawnWithPipes();
+    }
   });
 }
 

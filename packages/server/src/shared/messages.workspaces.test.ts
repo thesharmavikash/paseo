@@ -44,11 +44,76 @@ describe("workspace message schemas", () => {
           name: "",
           status: "not-a-bucket",
           activityAt: null,
+          services: [],
         },
       },
     });
 
     expect(result.success).toBe(false);
+  });
+
+  test("parses workspace descriptors with services", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "workspace_update",
+      payload: {
+        kind: "upsert",
+        workspace: {
+          id: "/repo",
+          projectId: "/repo",
+          projectDisplayName: "repo",
+          projectRootPath: "/repo",
+          projectKind: "non_git",
+          workspaceKind: "directory",
+          name: "repo",
+          status: "done",
+          activityAt: null,
+          services: [
+            {
+              serviceName: "web",
+              hostname: "web.localhost",
+              port: 3000,
+              url: "http://web.localhost:6767",
+              status: "running",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("workspace_update");
+    if (parsed.type !== "workspace_update" || parsed.payload.kind !== "upsert") {
+      throw new Error("Expected workspace_update upsert payload");
+    }
+    expect(parsed.payload.workspace.services).toEqual([
+      {
+        serviceName: "web",
+        hostname: "web.localhost",
+        port: 3000,
+        url: "http://web.localhost:6767",
+        status: "running",
+      },
+    ]);
+  });
+
+  test("parses service_status_update payload", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "service_status_update",
+      payload: {
+        workspaceId: "/repo",
+        services: [
+          {
+            serviceName: "web",
+            hostname: "web.localhost",
+            port: 3000,
+            url: null,
+            status: "stopped",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.type).toBe("service_status_update");
+    expect(parsed.payload.workspaceId).toBe("/repo");
   });
 
   test("parses workspace_setup_progress payload", () => {
@@ -67,6 +132,7 @@ describe("workspace message schemas", () => {
               index: 1,
               command: "npm install",
               cwd: "/repo/.paseo/worktrees/feature-a",
+              log: "done",
               status: "completed",
               exitCode: 0,
               durationMs: 100,
@@ -78,5 +144,38 @@ describe("workspace message schemas", () => {
     });
 
     expect(parsed.type).toBe("workspace_setup_progress");
+  });
+
+  test("parses workspace_setup_status_request", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "workspace_setup_status_request",
+      workspaceId: "/repo/.paseo/worktrees/feature-a",
+      requestId: "req-status",
+    });
+
+    expect(parsed.type).toBe("workspace_setup_status_request");
+  });
+
+  test("parses workspace_setup_status_response payload", () => {
+    const parsed = SessionOutboundMessageSchema.parse({
+      type: "workspace_setup_status_response",
+      payload: {
+        requestId: "req-status",
+        workspaceId: "/repo/.paseo/worktrees/feature-a",
+        snapshot: {
+          status: "completed",
+          detail: {
+            type: "worktree_setup",
+            worktreePath: "/repo/.paseo/worktrees/feature-a",
+            branchName: "feature-a",
+            log: "done",
+            commands: [],
+          },
+          error: null,
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("workspace_setup_status_response");
   });
 });

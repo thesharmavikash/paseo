@@ -14,6 +14,9 @@ type WorkspaceSetupDaemonClient = {
   createPaseoWorktree(
     input: { cwd: string; worktreeSlug?: string },
   ): Promise<{ workspace: { id: string; name: string } | null; error: string | null }>;
+  listTerminals(
+    cwd?: string,
+  ): Promise<{ cwd?: string; terminals: Array<{ id: string; name: string }>; requestId: string }>;
   subscribeRawMessages(handler: (message: SessionOutboundMessage) => void): () => void;
 };
 
@@ -95,7 +98,7 @@ export async function createWorkspaceFromSidebar(page: Page, repoPath: string): 
 }
 
 export async function expectSetupPanel(page: Page): Promise<void> {
-  await expect(page.getByText("Workspace setup", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("workspace-setup-panel")).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectSetupStatus(

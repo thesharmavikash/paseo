@@ -118,6 +118,8 @@ import {
   createServiceProxyMiddleware,
   createServiceProxyUpgradeHandler,
 } from "./service-proxy.js";
+import { ServiceHealthMonitor } from "./service-health-monitor.js";
+import { createServiceStatusEmitter } from "./service-status-projection.js";
 import {
   createVoiceMcpSocketBridgeManager,
   type VoiceMcpSocketBridgeManager,
@@ -225,6 +227,18 @@ export async function createPaseoDaemon(
     let boundListenTarget: ListenTarget | null = null;
 
     const serviceRouteStore = new ServiceRouteStore();
+    let wsServer: VoiceAssistantWebSocketServer | null = null;
+    const serviceHealthMonitor = new ServiceHealthMonitor({
+      routeStore: serviceRouteStore,
+      onChange: createServiceStatusEmitter({
+        sessions: () =>
+          wsServer?.listActiveSessions().map((session) => ({
+            emit: (message) => session.emitServerMessage(message),
+          })) ?? [],
+        routeStore: serviceRouteStore,
+        daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+      }),
+    });
 
     // Host allowlist / DNS rebinding protection (vite-like semantics).
     // For non-TCP (unix sockets), skip host validation.
@@ -450,7 +464,6 @@ export async function createPaseoDaemon(
       "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
     );
     logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
-    let wsServer: VoiceAssistantWebSocketServer | null = null;
     let voiceMcpBridgeManager: VoiceMcpSocketBridgeManager | null = null;
 
     // Create in-memory transport for Session's Agent MCP client (voice assistant tools)
@@ -676,6 +689,7 @@ export async function createPaseoDaemon(
       checkoutDiffManager,
       serviceRouteStore,
       () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+      (hostname) => serviceHealthMonitor.getStatusForHostname(hostname),
     );
 
     logger.info({ elapsed: elapsed() }, "Bootstrap complete, ready to start listening");
@@ -766,9 +780,11 @@ export async function createPaseoDaemon(
       // Start speech service after listening so synchronous Sherpa native
       // model loading doesn't block the server from accepting connections.
       speechService.start();
+      serviceHealthMonitor.start();
     };
 
     const stop = async () => {
+      serviceHealthMonitor.stop();
       await closeAllAgents(logger, agentManager);
       await agentManager.flush().catch(() => undefined);
       detachAgentStoragePersistence();

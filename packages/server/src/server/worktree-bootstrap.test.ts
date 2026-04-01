@@ -5,7 +5,12 @@ import { join } from "path";
 import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { createAgentWorktree, runAsyncWorktreeBootstrap } from "./worktree-bootstrap.js";
+import {
+  createAgentWorktree,
+  runAsyncWorktreeBootstrap,
+  spawnWorktreeServices,
+} from "./worktree-bootstrap.js";
+import { ServiceRouteStore } from "./service-proxy.js";
 
 describe("runAsyncWorktreeBootstrap", () => {
   let tempDir: string;
@@ -114,12 +119,15 @@ describe("runAsyncWorktreeBootstrap", () => {
         expect(persistedSetupItems[0].detail.commands[0]).toMatchObject({
           index: 1,
           command: 'echo "line-one"; echo "line-two" 1>&2',
+          log: expect.stringContaining("line-one"),
           status: "completed",
           exitCode: 0,
         });
+        expect(persistedSetupItems[0].detail.commands[0]?.log).toContain("line-two");
         expect(persistedSetupItems[0].detail.commands[1]).toMatchObject({
           index: 2,
           command: 'echo "line-three"',
+          log: "line-three\n",
           status: "completed",
           exitCode: 0,
         });
@@ -247,6 +255,64 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(persistedSetupItem.detail.log).toContain("prefix-");
     expect(persistedSetupItem.detail.log).toContain("-suffix");
     expect(persistedSetupItem.detail.log).toContain("...<output truncated in the middle>...");
+    expect(persistedSetupItem.detail.commands[0]?.log).toContain("prefix-");
+    expect(persistedSetupItem.detail.commands[0]?.log).toContain("-suffix");
+    expect(persistedSetupItem.detail.commands[0]?.log).toContain(
+      "...<output truncated in the middle>...",
+    );
+  });
+
+  it("keeps only the final carriage-return-updated content in command logs", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          setup: [
+            `node -e "process.stdout.write('fetch 1/3\\\\rfetch 2/3\\\\rfetch 3/3\\\\nready\\\\n')"`,
+          ],
+        },
+      }),
+    );
+    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'add carriage return setup'", {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const worktreeBootstrap = await createAgentWorktree({
+      cwd: repoDir,
+      branchName: "feature-carriage-return",
+      baseBranch: "main",
+      worktreeSlug: "feature-carriage-return",
+      paseoHome,
+    });
+
+    const persisted: AgentTimelineItem[] = [];
+    await runAsyncWorktreeBootstrap({
+      agentId: "agent-carriage-return",
+      worktree: worktreeBootstrap.worktree,
+      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
+      terminalManager: null,
+      appendTimelineItem: async (item) => {
+        persisted.push(item);
+        return true;
+      },
+      emitLiveTimelineItem: async () => true,
+    });
+
+    const persistedSetupItem = persisted.find(
+      (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
+        item.type === "tool_call" && item.name === "paseo_worktree_setup",
+    );
+    expect(persistedSetupItem?.detail.type).toBe("worktree_setup");
+    if (!persistedSetupItem || persistedSetupItem.detail.type !== "worktree_setup") {
+      throw new Error("Expected worktree_setup tool detail");
+    }
+
+    expect(persistedSetupItem.detail.log).toContain("\nfetch 3/3\nready\n");
+    expect(persistedSetupItem.detail.log).not.toContain("\nfetch 1/3\n");
+    expect(persistedSetupItem.detail.log).not.toContain("\nfetch 2/3\n");
+    expect(persistedSetupItem.detail.commands[0]?.log).toBe("fetch 3/3\nready\n");
   });
 
   it("waits for terminal output before sending bootstrap commands", async () => {
@@ -439,5 +505,86 @@ describe("runAsyncWorktreeBootstrap", () => {
         item.status === "completed",
     );
     expect(terminalToolCall?.status).toBe("completed");
+  });
+
+  it("spawns services without PASEO_SERVICE_URL when the daemon has no TCP port", async () => {
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        services: {
+          web: {
+            command: "npm run dev",
+          },
+        },
+      }),
+    );
+    execSync("git add paseo.json", { cwd: repoDir, stdio: "pipe" });
+    execSync("git -c commit.gpgsign=false commit -m 'add service config'", {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const routeStore = new ServiceRouteStore();
+    const createTerminalCalls: Array<{ cwd: string; name?: string; env?: Record<string, string> }> = [];
+
+    const results = await spawnWorktreeServices({
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      branchName: "feature-socket-service",
+      daemonPort: null,
+      routeStore,
+      terminalManager: {
+        async getTerminals() {
+          return [];
+        },
+        async createTerminal(options) {
+          createTerminalCalls.push(options);
+          return {
+            id: "term-service",
+            name: options.name ?? "Terminal",
+            cwd: options.cwd,
+            send: () => {},
+            subscribe: () => () => {},
+            onExit: () => () => {},
+            getState: () => ({
+              rows: 1,
+              cols: 1,
+              grid: [[{ char: "$" }]],
+              scrollback: [],
+              cursor: { row: 0, col: 0 },
+            }),
+            kill: () => {},
+          };
+        },
+        registerCwdEnv() {},
+        getTerminal() {
+          return undefined;
+        },
+        killTerminal() {},
+        listDirectories() {
+          return [];
+        },
+        killAll() {},
+        subscribeTerminalsChanged() {
+          return () => {};
+        },
+      },
+    });
+
+    expect(results).toHaveLength(1);
+    expect(routeStore.listRoutes()).toEqual([
+      {
+        hostname: "feature-socket-service.web.localhost",
+        port: expect.any(Number),
+        workspaceId: repoDir,
+        serviceName: "web",
+      },
+    ]);
+    expect(createTerminalCalls).toHaveLength(1);
+    expect(createTerminalCalls[0]?.cwd).toBe(repoDir);
+    expect(createTerminalCalls[0]?.name).toBe("web");
+    expect(createTerminalCalls[0]?.env?.PORT).toEqual(expect.any(String));
+    expect(createTerminalCalls[0]?.env?.HOST).toBe("127.0.0.1");
+    expect(createTerminalCalls[0]?.env?.PASEO_SERVICE_URL).toBeUndefined();
   });
 });

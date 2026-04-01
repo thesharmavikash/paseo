@@ -10,6 +10,7 @@ import {
   getServiceConfigs,
   getWorktreeTerminalSpecs,
   listPaseoWorktrees,
+  processCarriageReturns,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -254,15 +255,13 @@ function buildWorktreeSetupLog(input: {
   const total = results.length;
   for (const [index, result] of results.entries()) {
     lines.push(`==> [${index + 1}/${total}] Running: ${result.command}`);
-    const accumulator = outputAccumulatorsByIndex?.get(index + 1);
-    const output = accumulator
-      ? renderMiddleTruncationAccumulator(accumulator)
-      : truncateTextInMiddle(
-          `${result.stdout ?? ""}${result.stderr ?? ""}`,
-          MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES,
-        );
-    if (output.text.length > 0) {
-      lines.push(output.text.replace(/\n$/, ""));
+    const output = buildWorktreeSetupCommandLog({
+      index: index + 1,
+      result,
+      outputAccumulatorsByIndex,
+    });
+    if (output.log.length > 0) {
+      lines.push(output.log.replace(/\n$/, ""));
     }
     if (output.truncated) {
       anyTruncated = true;
@@ -276,6 +275,26 @@ function buildWorktreeSetupLog(input: {
   return {
     log: lines.join("\n"),
     truncated: anyTruncated,
+  };
+}
+
+function buildWorktreeSetupCommandLog(input: {
+  index: number;
+  result: WorktreeSetupCommandResult;
+  outputAccumulatorsByIndex?: Map<number, WorktreeSetupOutputAccumulator>;
+}): { log: string; truncated: boolean } {
+  const { index, result, outputAccumulatorsByIndex } = input;
+  const accumulator = outputAccumulatorsByIndex?.get(index);
+  const rendered = accumulator
+    ? renderMiddleTruncationAccumulator(accumulator)
+    : truncateTextInMiddle(
+        `${result.stdout ?? ""}${result.stderr ?? ""}`,
+        MAX_WORKTREE_SETUP_COMMAND_OUTPUT_BYTES,
+      );
+
+  return {
+    log: processCarriageReturns(rendered.text),
+    truncated: rendered.truncated,
   };
 }
 
@@ -341,14 +360,26 @@ export function buildWorktreeSetupDetail(input: {
   results: WorktreeSetupCommandResult[];
   outputAccumulatorsByIndex?: Map<number, WorktreeSetupOutputAccumulator>;
 }): Extract<ToolCallDetail, { type: "worktree_setup" }> {
-  const commands = input.results.map((result, index) => ({
-    index: index + 1,
-    command: result.command,
-    cwd: result.cwd,
-    status: commandStatusFromResult(result),
-    exitCode: result.exitCode,
-    ...(result.durationMs > 0 ? { durationMs: result.durationMs } : {}),
-  }));
+  let anyCommandTruncated = false;
+  const commands = input.results.map((result, index) => {
+    const renderedLog = buildWorktreeSetupCommandLog({
+      index: index + 1,
+      result,
+      outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
+    });
+    if (renderedLog.truncated) {
+      anyCommandTruncated = true;
+    }
+    return {
+      index: index + 1,
+      command: result.command,
+      cwd: result.cwd,
+      log: renderedLog.log,
+      status: commandStatusFromResult(result),
+      exitCode: result.exitCode,
+      ...(result.durationMs > 0 ? { durationMs: result.durationMs } : {}),
+    };
+  });
   const renderedLog = buildWorktreeSetupLog({
     results: input.results,
     outputAccumulatorsByIndex: input.outputAccumulatorsByIndex,
@@ -360,7 +391,7 @@ export function buildWorktreeSetupDetail(input: {
     branchName: input.worktree.branchName,
     log: renderedLog.log,
     commands,
-    ...(renderedLog.truncated ? { truncated: true } : {}),
+    ...(renderedLog.truncated || anyCommandTruncated ? { truncated: true } : {}),
   };
 }
 
@@ -704,18 +735,14 @@ export async function runAsyncWorktreeBootstrap(
 
   await runWorktreeTerminalBootstrap(options, runtimeEnv);
 
-  if (
-    !options.terminalManager ||
-    !options.serviceRouteStore ||
-    options.daemonPort === null ||
-    options.daemonPort === undefined
-  ) {
+  if (!options.terminalManager || !options.serviceRouteStore) {
     return;
   }
 
   try {
     await spawnWorktreeServices({
       repoRoot: options.worktree.worktreePath,
+      workspaceId: options.worktree.worktreePath,
       branchName: options.worktree.branchName,
       daemonPort: options.daemonPort,
       routeStore: options.serviceRouteStore,
@@ -743,13 +770,15 @@ export interface WorktreeServiceResult {
 
 export async function spawnWorktreeServices(options: {
   repoRoot: string;
+  workspaceId: string;
   branchName: string | null;
-  daemonPort: number;
+  daemonPort?: number | null;
   routeStore: ServiceRouteStore;
   terminalManager: TerminalManager;
   logger?: Logger;
 }): Promise<WorktreeServiceResult[]> {
-  const { repoRoot, branchName, daemonPort, routeStore, terminalManager, logger } = options;
+  const { repoRoot, workspaceId, branchName, daemonPort, routeStore, terminalManager, logger } =
+    options;
   const serviceConfigs = getServiceConfigs(repoRoot);
   if (serviceConfigs.size === 0) {
     return [];
@@ -758,43 +787,72 @@ export async function spawnWorktreeServices(options: {
   const results: WorktreeServiceResult[] = [];
 
   for (const [serviceName, config] of serviceConfigs) {
-    const port = config.port ?? (await findFreePort());
-    const branchHostnameLabel = branchName ? slugify(branchName) : null;
+    let hostname: string | null = null;
+    let port: number | null = null;
 
-    const isDefaultBranch =
-      branchName === null || branchName === "main" || branchName === "master";
-    const hostname = isDefaultBranch
-      ? `${serviceName}.localhost`
-      : `${branchHostnameLabel}.${serviceName}.localhost`;
+    try {
+      port = config.port ?? (await findFreePort());
+      const branchHostnameLabel = branchName ? slugify(branchName) : null;
 
-    routeStore.addRoute(hostname, port);
+      const isDefaultBranch =
+        branchName === null || branchName === "main" || branchName === "master";
+      hostname = isDefaultBranch
+        ? `${serviceName}.localhost`
+        : `${branchHostnameLabel}.${serviceName}.localhost`;
 
-    const env: Record<string, string> = {
-      PORT: String(port),
-      HOST: "127.0.0.1",
-      PASEO_SERVICE_URL: `http://${hostname}:${daemonPort}`,
-    };
+      routeStore.registerRoute({
+        hostname,
+        port,
+        workspaceId,
+        serviceName,
+      });
 
-    const terminal = await terminalManager.createTerminal({
-      cwd: repoRoot,
-      name: serviceName,
-      env,
-    });
+      const env: Record<string, string> = {
+        PORT: String(port),
+        HOST: "127.0.0.1",
+      };
+      if (daemonPort !== null && daemonPort !== undefined) {
+        env.PASEO_SERVICE_URL = `http://${hostname}:${daemonPort}`;
+      }
 
-    await waitForTerminalBootstrapReadiness(terminal);
-    terminal.send({ type: "input", data: `${config.command}\r` });
+      const terminal = await terminalManager.createTerminal({
+        cwd: repoRoot,
+        name: serviceName,
+        env,
+      });
 
-    logger?.info(
-      { serviceName, hostname, port, terminalId: terminal.id },
-      `Registered service proxy: ${hostname} -> 127.0.0.1:${port}`,
-    );
+      await waitForTerminalBootstrapReadiness(terminal);
+      terminal.send({ type: "input", data: `${config.command}\r` });
 
-    results.push({
-      serviceName,
-      hostname,
-      port,
-      terminalId: terminal.id,
-    });
+      logger?.info(
+        { serviceName, hostname, port, terminalId: terminal.id },
+        `Registered service proxy: ${hostname} -> 127.0.0.1:${port}`,
+      );
+
+      results.push({
+        serviceName,
+        hostname,
+        port,
+        terminalId: terminal.id,
+      });
+    } catch (error) {
+      if (hostname && port !== null) {
+        routeStore.removeRoute(hostname);
+      }
+      logger?.error(
+        {
+          err: error,
+          serviceName,
+          repoRoot,
+          branchName,
+          hostname,
+          port,
+          command: config.command,
+        },
+        "Failed to spawn worktree service",
+      );
+      throw error;
+    }
   }
 
   return results;

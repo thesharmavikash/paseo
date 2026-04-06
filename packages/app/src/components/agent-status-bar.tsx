@@ -75,6 +75,7 @@ type ControlledAgentStatusBarProps = {
   modelOptions?: StatusOption[];
   selectedModelId?: string;
   onSelectModel?: (modelId: string) => void;
+  onSelectProviderAndModel?: (provider: string, modelId: string) => void;
   thinkingOptions?: StatusOption[];
   selectedThinkingOptionId?: string;
   onSelectThinkingOption?: (thinkingOptionId: string) => void;
@@ -203,6 +204,7 @@ function ControlledStatusBar({
   modelOptions,
   selectedModelId,
   onSelectModel,
+  onSelectProviderAndModel,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -648,10 +650,14 @@ function ControlledStatusBar({
                   selectedModel={selectedModelId ?? ""}
                   canSelectProvider={canSelectProviderInModelMenu}
                   onSelect={(selectedProviderId, modelId) => {
-                    if (selectedProviderId !== provider) {
-                      onSelectProvider?.(selectedProviderId);
+                    if (onSelectProviderAndModel) {
+                      onSelectProviderAndModel(selectedProviderId, modelId);
+                    } else {
+                      if (selectedProviderId !== provider) {
+                        onSelectProvider?.(selectedProviderId);
+                      }
+                      onSelectModel?.(modelId);
                     }
-                    onSelectModel?.(modelId);
                   }}
                   favoriteKeys={favoriteKeys}
                   onToggleFavorite={onToggleFavoriteModel}
@@ -1135,6 +1141,7 @@ export function DraftAgentStatusBar({
         modelOptions={modelOptions}
         selectedModelId={selectedModel}
         onSelectModel={(modelId) => onSelectModel(modelId)}
+        onSelectProviderAndModel={onSelectProviderAndModel}
         isModelLoading={isAllModelsLoading}
         favoriteKeys={favoriteKeys}
         onToggleFavoriteModel={(provider, modelId) => {

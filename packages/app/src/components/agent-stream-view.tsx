@@ -26,6 +26,7 @@ import { Check, ChevronDown, X } from "lucide-react-native";
 import { usePanelStore } from "@/stores/panel-store";
 import {
   AssistantMessage,
+  SpeakMessage,
   UserMessage,
   ActivityLog,
   ToolCall,
@@ -365,6 +366,21 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
             if (payload.source === "agent") {
               const data = payload.data;
+
+              if (
+                data.name === "speak" &&
+                data.detail.type === "unknown" &&
+                typeof data.detail.input === "string" &&
+                data.detail.input.trim()
+              ) {
+                return (
+                  <SpeakMessage
+                    message={data.detail.input}
+                    timestamp={item.timestamp.getTime()}
+                  />
+                );
+              }
+
               return (
                 <ToolCall
                   toolName={data.name}

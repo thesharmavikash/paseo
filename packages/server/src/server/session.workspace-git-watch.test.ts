@@ -308,7 +308,8 @@ describe("workspace git watch targets", () => {
       workspaceDirectory: "/tmp/repo",
     };
 
-    sessionAny.buildWorkspaceDescriptorMap = async () => new Map([["/tmp/repo", descriptor]]);
+    sessionAny.buildWorkspaceDescriptorMap = async () =>
+      new Map([[descriptor.id, descriptor]]);
 
     await sessionAny.primeWorkspaceGitWatchFingerprints([descriptor]);
 
@@ -554,7 +555,8 @@ describe("workspace git watch targets", () => {
       diffStat: { additions: 1, deletions: 0 },
     };
 
-    sessionAny.buildWorkspaceDescriptorMap = async () => new Map([["/tmp/repo", descriptor]]);
+    sessionAny.buildWorkspaceDescriptorMap = async () =>
+      new Map([[descriptor.id, descriptor]]);
 
     await sessionAny.syncWorkspaceGitWatchTarget("/tmp/repo", { isGit: true });
     sessionAny.primeWorkspaceGitWatchFingerprints([descriptor]);

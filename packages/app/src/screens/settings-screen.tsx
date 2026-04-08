@@ -476,17 +476,25 @@ function ProvidersSection({ routeServerId }: ProvidersSectionProps) {
               const entry = entries?.find((e) => e.provider === def.id);
               const status = entry?.status ?? "unavailable";
               const ProviderIcon = getProviderIcon(def.id);
+              const providerError =
+                status === "error" && typeof entry?.error === "string" && entry.error.trim().length > 0
+                  ? entry.error.trim()
+                  : null;
 
               return (
                 <View key={def.id} style={styles.audioRow}>
-                  <View
-                    style={[
-                      styles.audioRowContent,
-                      { flexDirection: "row", alignItems: "center", gap: theme.spacing[2] },
-                    ]}
-                  >
-                    <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
-                    <Text style={styles.audioRowTitle}>{def.label}</Text>
+                  <View style={styles.audioRowContent}>
+                    <View
+                      style={{ flexDirection: "row", alignItems: "center", gap: theme.spacing[2] }}
+                    >
+                      <ProviderIcon size={theme.iconSize.sm} color={theme.colors.foreground} />
+                      <Text style={styles.audioRowTitle}>{def.label}</Text>
+                    </View>
+                    {providerError ? (
+                      <Text style={styles.aboutErrorText} numberOfLines={3}>
+                        {providerError}
+                      </Text>
+                    ) : null}
                   </View>
                   <View style={styles.providerActions}>
                     <StatusBadge

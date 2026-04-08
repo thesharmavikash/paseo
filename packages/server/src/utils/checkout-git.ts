@@ -1,4 +1,5 @@
-import { exec, execFile, spawn } from "child_process";
+import { exec, execFile } from "child_process";
+import { spawnProcess } from "./spawn.js";
 import { promisify } from "util";
 import { resolve, dirname, basename } from "path";
 import { realpathSync } from "fs";
@@ -121,7 +122,7 @@ async function spawnLimitedText(params: {
   const accept = new Set(params.acceptExitCodes ?? [0]);
 
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(params.cmd, params.args, {
+    const child = spawnProcess(params.cmd, params.args, {
       cwd: params.cwd,
       env: params.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -140,7 +141,7 @@ async function spawnLimitedText(params: {
       }
     };
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout!.on("data", (chunk: Buffer) => {
       if (truncated) return;
       stdoutBytes += chunk.length;
       if (stdoutBytes > params.maxBytes) {
@@ -153,7 +154,7 @@ async function spawnLimitedText(params: {
 
     // We don't buffer stderr (it can be large too). Keep it minimal for debugging.
     let stderrPreview = "";
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr!.on("data", (chunk: Buffer) => {
       if (stderrPreview.length > 2048) return;
       stderrPreview += chunk.toString("utf8");
     });
@@ -1935,9 +1936,9 @@ const ReviewDecisionSchema = z
 type CheckRunNode = z.infer<typeof CheckRunNodeSchema>;
 type StatusContextNode = z.infer<typeof StatusContextNodeSchema>;
 
-function resolveGhPath(): string {
+async function resolveGhPath(): Promise<string> {
   if (cachedGhPath === undefined) {
-    cachedGhPath = findExecutable("gh");
+    cachedGhPath = await findExecutable("gh");
   }
   if (cachedGhPath === null) {
     throw new Error("GitHub CLI (gh) is not installed or not in PATH");
@@ -2164,7 +2165,7 @@ export async function createPullRequest(
   options: CreatePullRequestOptions,
 ): Promise<{ url: string; number: number }> {
   await requireGitRepo(cwd);
-  const ghPath = resolveGhPath();
+  const ghPath = await resolveGhPath();
   const repo = await resolveGitHubRepo(cwd);
   if (!repo) {
     throw new Error("Unable to determine GitHub repo from git remote");
@@ -2237,7 +2238,7 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
   }
   let ghPath: string;
   try {
-    ghPath = resolveGhPath();
+    ghPath = await resolveGhPath();
   } catch {
     return {
       status: null,
@@ -2319,7 +2320,7 @@ export async function searchGitHubIssuesAndPrs(
   await requireGitRepo(cwd);
   let ghPath: string;
   try {
-    ghPath = resolveGhPath();
+    ghPath = await resolveGhPath();
   } catch {
     return { items: [], githubFeaturesEnabled: false };
   }

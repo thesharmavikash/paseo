@@ -17,7 +17,7 @@ import path from "node:path";
 import pino from "pino";
 
 import type { AgentSession, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../../utils/executable.js";
+import { isCommandAvailableSync } from "../../../../utils/executable.js";
 import { ClaudeAgentClient } from "../claude-agent.js";
 
 // ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ const logger = pino({ level: "silent" });
 const client = new ClaudeAgentClient({ logger });
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRun = isCommandAvailable("claude") && hasClaudeCredentials;
+const canRun = isCommandAvailableSync("claude") && hasClaudeCredentials;
 
 function tmpCwd(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));

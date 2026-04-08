@@ -12,6 +12,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
+import type { Event as OpenCodeEvent } from "@opencode-ai/sdk/v2/client";
 import {
   __openCodeInternals,
   OpenCodeAgentClient,
@@ -116,15 +117,15 @@ const hasOpenCode = isBinaryInstalled("opencode");
       "beforeAll: Retrieved models",
     );
 
-    // Prefer fast models for tests - nano models are typically fastest
+    // Prefer cheap models that support tool use (required by OpenCode agents).
+    // Avoid free-tier OpenRouter models — they often lack tool-use support.
     const fastModel = models.find(
       (m) =>
         m.id.includes("gpt-4.1-nano") ||
+        m.id.includes("gpt-4.1-mini") ||
         m.id.includes("gpt-5-nano") ||
         m.id.includes("gpt-5.1-codex-mini") ||
-        m.id.includes("gpt-4o-mini") ||
-        m.id.includes("gpt-3.5") ||
-        m.id.includes("free"),
+        m.id.includes("gpt-4o-mini"),
     );
 
     if (fastModel) {
@@ -442,7 +443,7 @@ describe("OpenCode adapter context-window normalization", () => {
             modelID: "gpt-5",
           },
         },
-      },
+      } as OpenCodeEvent,
       {
         sessionId: "session-1",
         messageRoles: new Map(),

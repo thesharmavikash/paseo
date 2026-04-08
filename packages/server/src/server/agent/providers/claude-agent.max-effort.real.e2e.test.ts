@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import pino from "pino";
 
 import type { AgentStreamEvent, AgentSession } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../utils/executable.js";
+import { isCommandAvailableSync } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 
@@ -29,7 +29,7 @@ async function collectUntilTerminal(session: AgentSession): Promise<AgentStreamE
 }
 
 describe("Claude max effort availability (real)", () => {
-  test.runIf(isCommandAvailable("claude") && hasClaudeCredentials)(
+  test.runIf(isCommandAvailableSync("claude") && hasClaudeCredentials)(
     "surfaces the Claude stderr diagnostic when bypassPermissions + max effort is unavailable",
     async () => {
       const client = new ClaudeAgentClient({

@@ -7,7 +7,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import dotenv from "dotenv";
-import { isCommandAvailable } from "../../utils/executable.js";
+import { isCommandAvailableSync } from "../../utils/executable.js";
 
 // Load .env.test eagerly so isProviderAvailable() has credentials at collection time.
 const serverRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -105,21 +105,21 @@ export function isProviderAvailable(provider: AgentProvider): boolean {
   switch (provider) {
     case "claude":
       return (
-        isCommandAvailable("claude") &&
+        isCommandAvailableSync("claude") &&
         (Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN) || Boolean(process.env.ANTHROPIC_API_KEY))
       );
     case "codex":
       return (
-        isCommandAvailable("codex") &&
+        isCommandAvailableSync("codex") &&
         (existsSync(join(homedir(), ".codex", "auth.json")) || Boolean(process.env.OPENAI_API_KEY))
       );
     case "copilot":
-      return isCommandAvailable("copilot");
+      return isCommandAvailableSync("copilot");
     case "opencode":
-      return isCommandAvailable("opencode");
+      return isCommandAvailableSync("opencode");
     case "pi":
       return (
-        isCommandAvailable(process.env.PI_ACP_PI_COMMAND ?? "pi") &&
+        isCommandAvailableSync(process.env.PI_ACP_PI_COMMAND ?? "pi") &&
         (Boolean(process.env.OPENAI_API_KEY) ||
           Boolean(process.env.ANTHROPIC_API_KEY) ||
           Boolean(process.env.OPENROUTER_API_KEY) ||

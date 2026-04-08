@@ -33,7 +33,8 @@ export {
 export {
   applyProviderEnv,
 } from "./agent/provider-launch-config.js";
-export { findExecutable, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
+export { findExecutable, findExecutableSync, quoteWindowsArgument, quoteWindowsCommand } from "../utils/executable.js";
+export { spawnProcess } from "../utils/spawn.js";
 
 // Provider manifest (source of truth for provider definitions)
 export {

@@ -18,7 +18,7 @@ type EditorTargetDefinition = {
 
 type ListAvailableEditorTargetsDependencies = {
   platform?: NodeJS.Platform;
-  findExecutable?: (command: string) => string | null;
+  findExecutable?: (command: string) => string | null | Promise<string | null>;
 };
 
 type OpenInEditorTargetDependencies = ListAvailableEditorTargetsDependencies & {
@@ -65,28 +65,27 @@ function resolveEditorTargetDefinition(editorId: EditorTargetId): EditorTargetDe
   return target;
 }
 
-export function listAvailableEditorTargets(
+export async function listAvailableEditorTargets(
   dependencies: ListAvailableEditorTargetsDependencies = {},
-): EditorTargetDescriptorPayload[] {
+): Promise<EditorTargetDescriptorPayload[]> {
   const platform = dependencies.platform ?? process.platform;
   const findExecutableFn = dependencies.findExecutable ?? findExecutable;
 
-  return EDITOR_TARGETS.flatMap((target) => {
+  const results: EditorTargetDescriptorPayload[] = [];
+  for (const target of EDITOR_TARGETS) {
     if (!isTargetSupportedOnPlatform(target, platform)) {
-      return [];
+      continue;
     }
-    const executable = findExecutableFn(target.command);
+    const executable = await findExecutableFn(target.command);
     if (!executable) {
-      return [];
+      continue;
     }
-
-    return [
-      {
-        id: target.id,
-        label: target.label,
-      },
-    ];
-  });
+    results.push({
+      id: target.id,
+      label: target.label,
+    });
+  }
+  return results;
 }
 
 type Launch = {
@@ -94,17 +93,17 @@ type Launch = {
   args: string[];
 };
 
-function resolveEditorLaunch(input: {
+async function resolveEditorLaunch(input: {
   editorId: EditorTargetId;
   path: string;
   platform: NodeJS.Platform;
-  findExecutableFn: typeof findExecutable;
-}): Launch {
+  findExecutableFn: (command: string) => string | null | Promise<string | null>;
+}): Promise<Launch> {
   const target = resolveEditorTargetDefinition(input.editorId);
   if (!isTargetSupportedOnPlatform(target, input.platform)) {
     throw new Error(`Editor target unavailable: ${target.label}`);
   }
-  const executable = input.findExecutableFn(target.command);
+  const executable = await input.findExecutableFn(target.command);
   if (!executable) {
     throw new Error(`Editor target unavailable: ${target.label}`);
   }
@@ -135,7 +134,7 @@ export async function openInEditorTarget(
     throw new Error(`Path does not exist: ${pathToOpen}`);
   }
 
-  const launch = resolveEditorLaunch({
+  const launch = await resolveEditorLaunch({
     editorId: input.editorId,
     path: pathToOpen,
     platform,

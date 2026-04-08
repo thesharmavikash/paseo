@@ -20,11 +20,11 @@ import {
   query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { isCommandAvailable } from "../utils/executable.js";
+import { isCommandAvailableSync } from "../utils/executable.js";
 
 const hasClaudeCredentials =
   !!process.env.CLAUDE_CODE_OAUTH_TOKEN || !!process.env.ANTHROPIC_API_KEY;
-const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
+const canRunClaudeIntegration = isCommandAvailableSync("claude") && hasClaudeCredentials;
 
 // Pattern from claude-agent.ts listModels():
 // Use an empty async generator when you just need control methods

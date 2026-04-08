@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
@@ -79,14 +80,12 @@ import {
   applyProviderEnv,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
-import {
-  findExecutable,
-  quoteWindowsArgument,
-  quoteWindowsCommand,
-} from "../../../utils/executable.js";
+import { findExecutable } from "../../../utils/executable.js";
+import { spawnProcess } from "../../../utils/spawn.js";
 import { getOrchestratorModeInstructions } from "../orchestrator-instructions.js";
 
 const fsPromises = promises;
+const execFileAsync = promisify(execFile);
 const CLAUDE_SETTING_SOURCES: NonNullable<Options["settingSources"]> = ["user", "project"];
 
 type TurnState = "idle" | "foreground" | "autonomous";
@@ -225,26 +224,21 @@ function applyRuntimeSettingsToClaudeOptions(
       const isDefaultRuntime =
         resolved.command === "node" || resolved.command === "bun";
       const command = isDefaultRuntime ? process.execPath : resolved.command;
-      const child = spawn(
-        quoteWindowsCommand(command),
-        resolved.args.map((argument) => quoteWindowsArgument(argument)),
-        {
+      const child = spawnProcess(command, resolved.args, {
         cwd: spawnOptions.cwd,
         env: {
           ...applyProviderEnv(spawnOptions.env, runtimeSettings),
           ...(launchEnv ?? {}),
         },
-        shell: process.platform === "win32",
         signal: spawnOptions.signal,
         stdio: ["pipe", "pipe", "pipe"],
-        },
-      );
+      });
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
           options.stderr?.(chunk.toString());
         });
       }
-      return child;
+      return child as ChildProcessWithoutNullStreams;
     },
   };
 }
@@ -1144,9 +1138,9 @@ export class ClaudeAgentClient implements AgentClient {
 
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
-      const resolvedBinary = findExecutable("claude") ?? "not found";
+      const resolvedBinary = await findExecutable("claude") ?? "not found";
       const available = await this.isAvailable();
-      const version = resolveClaudeVersion(this.runtimeSettings);
+      const version = await resolveClaudeVersion(this.runtimeSettings);
       let modelsValue = "Not checked";
       let status = formatDiagnosticStatus(available);
 
@@ -1186,26 +1180,30 @@ export class ClaudeAgentClient implements AgentClient {
   }
 }
 
-function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): string | null {
+async function resolveClaudeVersion(runtimeSettings?: ProviderRuntimeSettings): Promise<string | null> {
   const command = runtimeSettings?.command;
 
   try {
     if (command?.mode === "replace") {
-      return execFileSync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
+      const { stdout } = await execFileAsync(command.argv[0]!, [...command.argv.slice(1), "--version"], {
         encoding: "utf8",
         timeout: 5_000,
-      }).trim() || null;
+        windowsHide: true,
+      });
+      return stdout.trim() || null;
     }
 
-    const executable = findExecutable("claude");
+    const executable = await findExecutable("claude");
     if (!executable) {
       return null;
     }
 
-    return execFileSync(executable, ["--version"], {
+    const { stdout } = await execFileAsync(executable, ["--version"], {
       encoding: "utf8",
       timeout: 5_000,
-    }).trim() || null;
+      windowsHide: true,
+    });
+    return stdout.trim() || null;
   } catch {
     return null;
   }
@@ -2027,7 +2025,7 @@ class ClaudeAgentSession implements AgentSession {
     this.persistence = null;
 
     const input = createAsyncMessageInput<SDKUserMessage>();
-    const options = this.buildOptions();
+    const options = await this.buildOptions();
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
     this.query = this.queryFactory({ prompt: input.iterable, options });
@@ -2064,7 +2062,7 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private buildOptions(): ClaudeOptions {
+  private async buildOptions(): Promise<ClaudeOptions> {
     const thinkingOptionId =
       this.config.thinkingOptionId && this.config.thinkingOptionId !== "default"
         ? this.config.thinkingOptionId
@@ -2083,7 +2081,7 @@ class ClaudeAgentSession implements AgentSession {
       .filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
       .join("\n\n");
 
-    const claudeBinary = findExecutable("claude");
+    const claudeBinary = await findExecutable("claude");
     this.logger.debug(
       {
         claudeBinary,

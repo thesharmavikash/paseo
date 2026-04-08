@@ -6,7 +6,7 @@ import pino from "pino";
 import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import type { AgentSession, AgentStreamEvent, ToolCallTimelineItem } from "../agent-sdk-types.js";
-import { isCommandAvailable } from "../../../utils/executable.js";
+import { isCommandAvailableSync } from "../../../utils/executable.js";
 import { ClaudeAgentClient } from "./claude-agent.js";
 import { streamSession } from "./test-utils/session-stream-adapter.js";
 
@@ -174,11 +174,11 @@ async function cleanupSession(handle: { cwd: string; session: AgentSession }): P
 }
 
 describe("ClaudeAgentSession integration", () => {
-  const canRunClaudeIntegration = isCommandAvailable("claude") && hasClaudeCredentials;
+  const canRunClaudeIntegration = isCommandAvailableSync("claude") && hasClaudeCredentials;
 
   beforeAll(() => {
     if (canRunClaudeIntegration) {
-      expect(isCommandAvailable("claude")).toBe(true);
+      expect(isCommandAvailableSync("claude")).toBe(true);
     }
   });
 

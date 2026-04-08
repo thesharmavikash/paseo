@@ -147,6 +147,7 @@ import {
   pushCurrentBranch,
   createPullRequest,
   getPullRequestStatus,
+  searchGitHubIssuesAndPrs,
   warmCheckoutShortstatInBackground,
 } from "../utils/checkout-git.js";
 import { getProjectIcon } from "../utils/project-icon.js";
@@ -1617,6 +1618,10 @@ export class Session {
 
         case "branch_suggestions_request":
           await this.handleBranchSuggestionsRequest(msg);
+          break;
+
+        case "github_search_request":
+          await this.handleGitHubSearchRequest(msg);
           break;
 
         case "directory_suggestions_request":
@@ -4027,6 +4032,36 @@ export class Session {
         type: "branch_suggestions_response",
         payload: {
           branches: [],
+          error: error instanceof Error ? error.message : String(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleGitHubSearchRequest(
+    msg: Extract<SessionInboundMessage, { type: "github_search_request" }>,
+  ): Promise<void> {
+    const { cwd, query, limit, requestId } = msg;
+
+    try {
+      const resolvedCwd = expandTilde(cwd);
+      const result = await searchGitHubIssuesAndPrs(resolvedCwd, query, limit);
+      this.emit({
+        type: "github_search_response",
+        payload: {
+          items: result.items,
+          githubFeaturesEnabled: result.githubFeaturesEnabled,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "github_search_response",
+        payload: {
+          items: [],
+          githubFeaturesEnabled: true,
           error: error instanceof Error ? error.message : String(error),
           requestId,
         },

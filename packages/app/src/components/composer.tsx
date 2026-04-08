@@ -63,6 +63,8 @@ interface ComposerProps {
   isInputActive: boolean;
   onSubmitMessage?: (payload: MessagePayload) => Promise<void>;
   allowEmptySubmit?: boolean;
+  /** Label to show on the submit button when the input is empty and allowEmptySubmit is true. */
+  emptySubmitLabel?: string;
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
   /** When true, blurs the input immediately when submitting. */
@@ -101,6 +103,7 @@ export function Composer({
   isInputActive,
   onSubmitMessage,
   allowEmptySubmit = false,
+  emptySubmitLabel,
   isSubmitLoading = false,
   blurOnSubmit = false,
   value,
@@ -737,6 +740,7 @@ export function Composer({
               onChangeText={setUserInput}
               onSubmit={handleSubmit}
               allowEmptySubmit={allowEmptySubmit}
+              emptySubmitLabel={emptySubmitLabel}
               isSubmitDisabled={isProcessing || isSubmitLoading}
               isSubmitLoading={isProcessing || isSubmitLoading}
               images={selectedImages}

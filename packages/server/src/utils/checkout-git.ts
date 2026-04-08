@@ -2297,3 +2297,110 @@ async function getPullRequestStatusUncached(cwd: string): Promise<PullRequestSta
     throw error;
   }
 }
+
+export interface GitHubSearchResult {
+  items: Array<{
+    kind: "issue" | "pr";
+    number: number;
+    title: string;
+    url: string;
+    state: string;
+    body: string | null;
+    labels: string[];
+  }>;
+  githubFeaturesEnabled: boolean;
+}
+
+export async function searchGitHubIssuesAndPrs(
+  cwd: string,
+  query: string,
+  limit = 20,
+): Promise<GitHubSearchResult> {
+  await requireGitRepo(cwd);
+  let ghPath: string;
+  try {
+    ghPath = resolveGhPath();
+  } catch {
+    return { items: [], githubFeaturesEnabled: false };
+  }
+
+  try {
+    const [issuesResult, prsResult] = await Promise.allSettled([
+      execFileAsync(
+        ghPath,
+        [
+          "issue",
+          "list",
+          "--search",
+          query,
+          "--json",
+          "number,title,url,state,body,labels",
+          "--limit",
+          String(limit),
+        ],
+        { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+      ),
+      execFileAsync(
+        ghPath,
+        [
+          "pr",
+          "list",
+          "--search",
+          query,
+          "--json",
+          "number,title,url,state,body,labels",
+          "--limit",
+          String(limit),
+        ],
+        { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } },
+      ),
+    ]);
+
+    const items: GitHubSearchResult["items"] = [];
+
+    if (issuesResult.status === "fulfilled") {
+      const parsed = JSON.parse(issuesResult.value.stdout.trim() || "[]");
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          items.push({
+            kind: "issue",
+            number: item.number,
+            title: item.title ?? "",
+            url: item.url ?? "",
+            state: item.state ?? "",
+            body: item.body ?? null,
+            labels: Array.isArray(item.labels)
+              ? item.labels.map((l: { name?: string }) => l.name ?? "").filter(Boolean)
+              : [],
+          });
+        }
+      }
+    }
+
+    if (prsResult.status === "fulfilled") {
+      const parsed = JSON.parse(prsResult.value.stdout.trim() || "[]");
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          items.push({
+            kind: "pr",
+            number: item.number,
+            title: item.title ?? "",
+            url: item.url ?? "",
+            state: item.state ?? "",
+            body: item.body ?? null,
+            labels: Array.isArray(item.labels)
+              ? item.labels.map((l: { name?: string }) => l.name ?? "").filter(Boolean)
+              : [],
+          });
+        }
+      }
+    }
+
+    return { items, githubFeaturesEnabled: true };
+  } catch (error) {
+    if (isGhAuthError(error)) {
+      return { items: [], githubFeaturesEnabled: false };
+    }
+    throw error;
+  }
+}

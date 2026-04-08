@@ -30,6 +30,7 @@ import type {
   CheckoutPrStatusResponse,
   ValidateBranchResponse,
   BranchSuggestionsResponse,
+  GitHubSearchResponse,
   DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
@@ -225,6 +226,7 @@ type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
+type GitHubSearchPayload = GitHubSearchResponse["payload"];
 type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
@@ -2492,6 +2494,23 @@ export class DaemonClient {
       },
       responseType: "branch_suggestions_response",
       timeout: 10000,
+    });
+  }
+
+  async searchGitHub(
+    options: { cwd: string; query: string; limit?: number },
+    requestId?: string,
+  ): Promise<GitHubSearchPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "github_search_request",
+        cwd: options.cwd,
+        query: options.query,
+        limit: options.limit,
+      },
+      responseType: "github_search_response",
+      timeout: 15000,
     });
   }
 

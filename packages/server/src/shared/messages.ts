@@ -1073,6 +1073,24 @@ export const BranchSuggestionsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const GitHubSearchItemSchema = z.object({
+  kind: z.enum(["issue", "pr"]),
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  state: z.string(),
+  body: z.string().nullable(),
+  labels: z.array(z.string()),
+});
+
+export const GitHubSearchRequestSchema = z.object({
+  type: z.literal("github_search_request"),
+  cwd: z.string(),
+  query: z.string(),
+  limit: z.number().int().min(1).max(50).optional(),
+  requestId: z.string(),
+});
+
 export const DirectorySuggestionsRequestSchema = z.object({
   type: z.literal("directory_suggestions_request"),
   query: z.string(),
@@ -1400,6 +1418,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrStatusRequestSchema,
   ValidateBranchRequestSchema,
   BranchSuggestionsRequestSchema,
+  GitHubSearchRequestSchema,
   DirectorySuggestionsRequestSchema,
   PaseoWorktreeListRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
@@ -2322,6 +2341,16 @@ export const BranchSuggestionsResponseSchema = z.object({
   }),
 });
 
+export const GitHubSearchResponseSchema = z.object({
+  type: z.literal("github_search_response"),
+  payload: z.object({
+    items: z.array(GitHubSearchItemSchema),
+    githubFeaturesEnabled: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const DirectorySuggestionsResponseSchema = z.object({
   type: z.literal("directory_suggestions_response"),
   payload: z.object({
@@ -2696,6 +2725,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrStatusResponseSchema,
   ValidateBranchResponseSchema,
   BranchSuggestionsResponseSchema,
+  GitHubSearchResponseSchema,
   DirectorySuggestionsResponseSchema,
   PaseoWorktreeListResponseSchema,
   PaseoWorktreeArchiveResponseSchema,
@@ -2923,6 +2953,9 @@ export type ValidateBranchRequest = z.infer<typeof ValidateBranchRequestSchema>;
 export type ValidateBranchResponse = z.infer<typeof ValidateBranchResponseSchema>;
 export type BranchSuggestionsRequest = z.infer<typeof BranchSuggestionsRequestSchema>;
 export type BranchSuggestionsResponse = z.infer<typeof BranchSuggestionsResponseSchema>;
+export type GitHubSearchItem = z.infer<typeof GitHubSearchItemSchema>;
+export type GitHubSearchRequest = z.infer<typeof GitHubSearchRequestSchema>;
+export type GitHubSearchResponse = z.infer<typeof GitHubSearchResponseSchema>;
 export type DirectorySuggestionsRequest = z.infer<typeof DirectorySuggestionsRequestSchema>;
 export type DirectorySuggestionsResponse = z.infer<typeof DirectorySuggestionsResponseSchema>;
 export type PaseoWorktreeListRequest = z.infer<typeof PaseoWorktreeListRequestSchema>;

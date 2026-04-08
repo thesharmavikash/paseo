@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { createNameId } from "mnemonic-id";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, GitBranch } from "lucide-react-native";
+import { ChevronDown, CircleDot, GitBranch, GitPullRequest, Plus, X } from "lucide-react-native";
 import { Composer } from "@/components/composer";
 import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType } from "@/components/ui/combobox";
@@ -28,6 +28,24 @@ import {
 } from "@/utils/workspace-execution";
 import { navigateToPreparedWorkspaceTab } from "@/utils/workspace-navigation";
 import type { ImageAttachment, MessagePayload } from "@/components/message-input";
+import type { GitHubSearchItem } from "@server/shared/messages";
+
+function buildInitialPrompt(userText: string, githubItems: GitHubSearchItem[]): string {
+  const parts: string[] = [];
+
+  for (const item of githubItems) {
+    const kind = item.kind === "pr" ? "Pull Request" : "Issue";
+    const header = `GitHub ${kind} #${item.number}: ${item.title}`;
+    const body = item.body?.trim();
+    parts.push(body ? `${header}\n\n${body}` : header);
+  }
+
+  if (userText) {
+    parts.push(userText);
+  }
+
+  return parts.join("\n\n---\n\n");
+}
 
 interface NewWorkspaceScreenProps {
   serverId: string;
@@ -52,6 +70,10 @@ export function NewWorkspaceScreen({
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [branchPickerOpen, setBranchPickerOpen] = useState(false);
   const branchAnchorRef = useRef<View>(null);
+  const [githubContextItems, setGithubContextItems] = useState<GitHubSearchItem[]>([]);
+  const [githubPickerOpen, setGithubPickerOpen] = useState(false);
+  const [githubSearchQuery, setGithubSearchQuery] = useState("");
+  const githubAnchorRef = useRef<View>(null);
 
   const displayName = displayNameProp?.trim() ?? "";
   const workspace = createdWorkspace;
@@ -97,6 +119,52 @@ export function NewWorkspaceScreen({
     },
     enabled: isConnected && !!client,
   });
+
+  const githubSearchQuery_trimmed = githubSearchQuery.trim();
+  const githubSearchResultsQuery = useQuery({
+    queryKey: ["github-search", serverId, sourceDirectory, githubSearchQuery_trimmed],
+    queryFn: async () => {
+      const connectedClient = withConnectedClient();
+      return connectedClient.searchGitHub({
+        cwd: sourceDirectory,
+        query: githubSearchQuery_trimmed,
+        limit: 20,
+      });
+    },
+    enabled: isConnected && !!client && githubSearchQuery_trimmed.length >= 2,
+  });
+
+  const githubSearchOptions: ComboboxOptionType[] = useMemo(() => {
+    const items = githubSearchResultsQuery.data?.items ?? [];
+    const selectedNumbers = new Set(githubContextItems.map((i) => `${i.kind}:${i.number}`));
+    return items
+      .filter((item) => !selectedNumbers.has(`${item.kind}:${item.number}`))
+      .map((item) => ({
+        id: `${item.kind}:${item.number}`,
+        label: `#${item.number} ${item.title}`,
+        // Include search query so the Combobox's client-side filter doesn't
+        // discard server-searched results that match on body but not title.
+        description: githubSearchQuery_trimmed,
+      }));
+  }, [githubSearchResultsQuery.data?.items, githubContextItems, githubSearchQuery_trimmed]);
+
+  const handleSelectGithubItem = useCallback(
+    (id: string) => {
+      const items = githubSearchResultsQuery.data?.items ?? [];
+      const [kind, numberStr] = id.split(":");
+      const item = items.find((i) => i.kind === kind && i.number === Number(numberStr));
+      if (item) {
+        setGithubContextItems((prev) => [...prev, item]);
+      }
+      setGithubPickerOpen(false);
+      setGithubSearchQuery("");
+    },
+    [githubSearchResultsQuery.data?.items],
+  );
+
+  const handleRemoveGithubItem = useCallback((index: number) => {
+    setGithubContextItems((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const branchOptions: ComboboxOptionType[] = useMemo(
     () =>
@@ -145,6 +213,7 @@ export function NewWorkspaceScreen({
           throw new Error("Composer state is required");
         }
 
+        const initialPrompt = buildInitialPrompt(text.trim(), githubContextItems);
         const encodedImages = await encodeImages(images);
         const workspaceDirectory = requireWorkspaceExecutionAuthority({ workspace }).workspaceDirectory;
         const agent = await connectedClient.createAgent({
@@ -158,7 +227,7 @@ export function NewWorkspaceScreen({
           ...(composerState.effectiveThinkingOptionId
             ? { thinkingOptionId: composerState.effectiveThinkingOptionId }
             : {}),
-          ...(text.trim() ? { initialPrompt: text.trim() } : {}),
+          ...(initialPrompt ? { initialPrompt } : {}),
           ...(encodedImages && encodedImages.length > 0 ? { images: encodedImages } : {}),
         });
 
@@ -181,7 +250,7 @@ export function NewWorkspaceScreen({
         setPendingAction(null);
       }
     },
-    [composerState, ensureWorkspace, serverId, setAgents, toast, withConnectedClient],
+    [composerState, ensureWorkspace, githubContextItems, serverId, setAgents, toast, withConnectedClient],
   );
 
   const workspaceTitle =
@@ -223,6 +292,8 @@ export function NewWorkspaceScreen({
             serverId={serverId}
             isInputActive={true}
             onSubmitMessage={handleCreateChatAgent}
+            allowEmptySubmit
+            emptySubmitLabel="Create"
             isSubmitLoading={pendingAction === "chat"}
             blurOnSubmit={true}
             value={chatDraft.text}
@@ -291,6 +362,93 @@ export function NewWorkspaceScreen({
                 )}
               />
             </View>
+            {githubContextItems.map((item, index) => (
+              <View key={`${item.kind}:${item.number}`} style={styles.githubChip}>
+                {item.kind === "pr" ? (
+                  <GitPullRequest size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                ) : (
+                  <CircleDot size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                )}
+                <Text style={styles.githubChipText} numberOfLines={1}>
+                  #{item.number} {item.title}
+                </Text>
+                <Pressable
+                  onPress={() => handleRemoveGithubItem(index)}
+                  accessibilityLabel={`Remove #${item.number}`}
+                  hitSlop={4}
+                >
+                  <X size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                </Pressable>
+              </View>
+            ))}
+            <View>
+              <Pressable
+                ref={githubAnchorRef}
+                onPress={() => setGithubPickerOpen(true)}
+                style={({ pressed, hovered }) => [
+                  styles.badge,
+                  hovered && styles.badgeHovered,
+                  pressed && styles.badgePressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Add GitHub issue or PR"
+              >
+                <Plus size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  Issue or PR
+                </Text>
+              </Pressable>
+              <Combobox
+                options={githubSearchOptions}
+                value=""
+                onSelect={handleSelectGithubItem}
+                searchable
+                searchPlaceholder="Search issues and PRs..."
+                title="GitHub"
+                open={githubPickerOpen}
+                onOpenChange={(open) => {
+                  setGithubPickerOpen(open);
+                  if (!open) setGithubSearchQuery("");
+                }}
+                onSearchQueryChange={setGithubSearchQuery}
+                desktopPlacement="bottom-start"
+                anchorRef={githubAnchorRef}
+                emptyText={
+                  githubSearchQuery_trimmed.length < 2
+                    ? "Type to search..."
+                    : githubSearchResultsQuery.isFetching
+                      ? "Searching..."
+                      : "No results found."
+                }
+                renderOption={({ option, selected, active, onPress }) => {
+                  const item = (githubSearchResultsQuery.data?.items ?? []).find(
+                    (i) => `${i.kind}:${i.number}` === option.id,
+                  );
+                  return (
+                    <ComboboxItem
+                      key={option.id}
+                      label={option.label}
+                      selected={selected}
+                      active={active}
+                      onPress={onPress}
+                      leadingSlot={
+                        item?.kind === "pr" ? (
+                          <GitPullRequest
+                            size={theme.iconSize.sm}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        ) : (
+                          <CircleDot
+                            size={theme.iconSize.sm}
+                            color={theme.colors.foregroundMuted}
+                          />
+                        )
+                      }
+                    />
+                  );
+                }}
+              />
+            </View>
           </View>
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </View>
@@ -351,6 +509,7 @@ const styles = StyleSheet.create((theme) => ({
   optionsRow: {
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[4] + theme.spacing[4] - 6,
     marginTop: -theme.spacing[2],
@@ -372,5 +531,21 @@ const styles = StyleSheet.create((theme) => ({
   badgeText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
+  },
+  githubChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 28,
+    paddingLeft: theme.spacing[2],
+    paddingRight: theme.spacing[1],
+    borderRadius: theme.borderRadius["2xl"],
+    backgroundColor: theme.colors.surface1,
+    gap: theme.spacing[1],
+    maxWidth: 240,
+  },
+  githubChipText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    flexShrink: 1,
   },
 }));

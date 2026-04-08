@@ -63,6 +63,8 @@ export interface MessageInputProps {
   onChangeText: (text: string) => void;
   onSubmit: (payload: MessagePayload) => void;
   allowEmptySubmit?: boolean;
+  /** Label to show on the submit button when the input is empty and allowEmptySubmit is true. */
+  emptySubmitLabel?: string;
   isSubmitDisabled?: boolean;
   isSubmitLoading?: boolean;
   images?: ImageAttachment[];
@@ -195,6 +197,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     onChangeText,
     onSubmit,
     allowEmptySubmit = false,
+    emptySubmitLabel,
     isSubmitDisabled = false,
     isSubmitLoading = false,
     images = [],
@@ -558,7 +561,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
 
   const handleSendMessage = useCallback(() => {
     const trimmed = value.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && images.length === 0 && !allowEmptySubmit) return;
     const payload = {
       text: trimmed,
       images: images.length > 0 ? images : undefined,
@@ -568,7 +571,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     inputHeightRef.current = MIN_INPUT_HEIGHT;
     setInputHeight(MIN_INPUT_HEIGHT);
     onHeightChange?.(MIN_INPUT_HEIGHT);
-  }, [value, images, onSubmit, isAgentRunning, onHeightChange]);
+  }, [value, images, onSubmit, isAgentRunning, onHeightChange, allowEmptySubmit]);
 
   const handleQueueMessage = useCallback(() => {
     if (!onQueue) return;
@@ -894,8 +897,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
   }
 
   const hasImages = images.length > 0;
-  const hasSendableContent = value.trim().length > 0 || hasImages || allowEmptySubmit;
+  const hasRealContent = value.trim().length > 0 || hasImages;
+  const hasSendableContent = hasRealContent || allowEmptySubmit;
   const shouldShowSendButton = hasSendableContent || isSubmitLoading;
+  const showEmptySubmitLabel = allowEmptySubmit && emptySubmitLabel && !hasRealContent && !isSubmitLoading;
   const canPressLoadingButton = isSubmitLoading && typeof onSubmitLoadingPress === "function";
   const isSendButtonDisabled =
     disabled || (!canPressLoadingButton && (isSubmitDisabled || isSubmitLoading));
@@ -1112,19 +1117,24 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
                 <TooltipTrigger
                   onPress={canPressLoadingButton ? onSubmitLoadingPress : handleSendMessage}
                   disabled={isSendButtonDisabled}
-                  accessibilityLabel={submitAccessibilityLabel}
+                  accessibilityLabel={showEmptySubmitLabel ? emptySubmitLabel : submitAccessibilityLabel}
                   accessibilityRole="button"
-                  style={[styles.sendButton, isSendButtonDisabled && styles.buttonDisabled]}
+                  style={[
+                    showEmptySubmitLabel ? styles.emptySubmitButton : styles.sendButton,
+                    isSendButtonDisabled && styles.buttonDisabled,
+                  ]}
                 >
                   {isSubmitLoading ? (
                     <ActivityIndicator size="small" color="white" />
+                  ) : showEmptySubmitLabel ? (
+                    <Text style={styles.emptySubmitLabel}>{emptySubmitLabel}</Text>
                   ) : (
                     <ArrowUp size={buttonIconSize} color="white" />
                   )}
                 </TooltipTrigger>
                 <TooltipContent side="top" align="center" offset={8}>
                   <View style={styles.tooltipRow}>
-                    <Text style={styles.tooltipText}>Send</Text>
+                    <Text style={styles.tooltipText}>{showEmptySubmitLabel ? emptySubmitLabel : "Send"}</Text>
                     {sendKeys ? <Shortcut chord={sendKeys} style={styles.tooltipShortcut} /> : null}
                   </View>
                 </TooltipContent>
@@ -1303,6 +1313,18 @@ const styles = StyleSheet.create(((theme: any) => ({
     backgroundColor: theme.colors.accent,
     alignItems: "center",
     justifyContent: "center",
+  },
+  emptySubmitButton: {
+    height: 28,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.accent,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: theme.spacing[3],
+  },
+  emptySubmitLabel: {
+    color: "white",
+    fontSize: theme.fontSize.sm,
   },
   iconButtonHovered: {
     backgroundColor: theme.colors.surface2,

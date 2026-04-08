@@ -326,7 +326,7 @@ export class PiACPAgentClient extends ACPAgentClient {
     if (!existsSync(resolvedPiAcpPath)) {
       return false;
     }
-    if (!isCommandAvailable(process.env.PI_ACP_PI_COMMAND ?? "pi")) {
+    if (!(await isCommandAvailable(process.env.PI_ACP_PI_COMMAND ?? "pi"))) {
       return false;
     }
     return (
@@ -340,8 +340,8 @@ export class PiACPAgentClient extends ACPAgentClient {
   async getDiagnostic(): Promise<{ diagnostic: string }> {
     try {
       const piCommand = process.env.PI_ACP_PI_COMMAND ?? "pi";
-      const piCliPath = findExecutable(piCommand);
-      const piVersion = piCliPath ? resolveBinaryVersion(piCliPath) : "unknown";
+      const piCliPath = await findExecutable(piCommand);
+      const piVersion = piCliPath ? await resolveBinaryVersion(piCliPath) : "unknown";
       const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
       const available = await this.isAvailable();
       let modelsValue = "Not checked";

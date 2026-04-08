@@ -53,20 +53,20 @@ export type ProviderCommandPrefix = {
   args: string[];
 };
 
-export function resolveProviderCommandPrefix(
+export async function resolveProviderCommandPrefix(
   commandConfig: ProviderCommand | undefined,
-  resolveDefaultCommand: () => string,
-): ProviderCommandPrefix {
+  resolveDefaultCommand: () => string | Promise<string>,
+): Promise<ProviderCommandPrefix> {
   if (!commandConfig || commandConfig.mode === "default") {
     return {
-      command: resolveDefaultCommand(),
+      command: await resolveDefaultCommand(),
       args: [],
     };
   }
 
   if (commandConfig.mode === "append") {
     return {
-      command: resolveDefaultCommand(),
+      command: await resolveDefaultCommand(),
       args: [...(commandConfig.args ?? [])],
     };
   }
@@ -102,12 +102,12 @@ export function applyProviderEnv(
   return merged;
 }
 
-export function isProviderCommandAvailable(
+export async function isProviderCommandAvailable(
   commandConfig: ProviderCommand | undefined,
-  resolveDefaultCommand: () => string,
-): boolean {
+  resolveDefaultCommand: () => string | Promise<string>,
+): Promise<boolean> {
   try {
-    const prefix = resolveProviderCommandPrefix(commandConfig, resolveDefaultCommand);
+    const prefix = await resolveProviderCommandPrefix(commandConfig, resolveDefaultCommand);
     return isCommandAvailable(prefix.command);
   } catch {
     return false;

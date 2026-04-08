@@ -1,38 +1,15 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
 export interface FindExecutableDependencies {
   execFileSync: typeof execFileSync;
   existsSync: typeof existsSync;
   platform: typeof platform;
-}
-
-function resolveWindowsPathEntries(deps: FindExecutableDependencies): string[] {
-  try {
-    const output = deps.execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        [
-          '$machine = [Environment]::GetEnvironmentVariable("Path", "Machine")',
-          '$user = [Environment]::GetEnvironmentVariable("Path", "User")',
-          "if ($machine) { Write-Output $machine }",
-          "if ($user) { Write-Output $user }",
-        ].join("; "),
-      ],
-      { encoding: "utf8" },
-    );
-    return output
-      .split(/\r?\n/)
-      .flatMap((line) => line.split(";"))
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-  } catch {
-    return [];
-  }
 }
 
 function resolveExecutableFromWhichOutput(
@@ -61,15 +38,13 @@ function resolveExecutableFromWhichOutput(
 }
 
 /**
- * On Unix we use plain `which` — the daemon's process.env.PATH is enriched
- * with the login shell environment at Electron desktop startup.
+ * On Unix we use `which`. On Windows we use `where.exe`.
  *
- * On Windows we augment the daemon PATH with machine/user registry PATH values
- * and return the first `where.exe` match. Launch-time execution decides whether
- * the resolved path needs `cmd.exe` semantics (for example npm shims under
- * nvm4w such as `C:\nvm4w\nodejs\codex`).
+ * Both rely on the inherited process.env.PATH — on macOS/Linux, Electron
+ * enriches it at startup via inheritLoginShellEnv(); on Windows, Electron
+ * inherits the full user environment from Explorer.
  */
-export function findExecutable(
+export function findExecutableSync(
   name: string,
   dependencies?: FindExecutableDependencies,
 ): string | null {
@@ -91,21 +66,10 @@ export function findExecutable(
 
   if (deps.platform() === "win32") {
     try {
-      const inheritedPath = process.env["Path"] ?? process.env["PATH"] ?? "";
-      const resolvedPath = [
-        ...inheritedPath.split(";"),
-        ...resolveWindowsPathEntries(deps),
-      ]
-        .map((entry) => entry.trim())
-        .filter((entry) => entry.length > 0)
-        .filter((entry, index, entries) => entries.indexOf(entry) === index)
-        .join(";");
-      const env = {
-        ...process.env,
-        PATH: resolvedPath,
-        Path: resolvedPath,
-      };
-      const out = deps.execFileSync("where.exe", [trimmed], { encoding: "utf8", env }).trim();
+      const out = deps.execFileSync("where.exe", [trimmed], {
+        encoding: "utf8",
+        windowsHide: true,
+      }).trim();
       return (
         out
           .split(/\r?\n/)
@@ -128,8 +92,48 @@ export function findExecutable(
   }
 }
 
-export function isCommandAvailable(command: string): boolean {
-  return findExecutable(command) !== null;
+export function isCommandAvailableSync(command: string): boolean {
+  return findExecutableSync(command) !== null;
+}
+
+export async function findExecutable(name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    return existsSync(trimmed) ? trimmed : null;
+  }
+
+  if (platform() === "win32") {
+    try {
+      const { stdout } = await execFileAsync("where.exe", [trimmed], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      return (
+        stdout
+          .trim()
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length > 0) ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const { stdout } = await execFileAsync("which", [trimmed], { encoding: "utf8" });
+    return resolveExecutableFromWhichOutput(trimmed, stdout.trim(), "which");
+  } catch {
+    return null;
+  }
+}
+
+export async function isCommandAvailable(command: string): Promise<boolean> {
+  return (await findExecutable(command)) !== null;
 }
 
 /**

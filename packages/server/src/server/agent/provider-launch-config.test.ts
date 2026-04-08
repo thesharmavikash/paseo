@@ -7,19 +7,19 @@ import {
 } from "./provider-launch-config.js";
 
 describe("resolveProviderCommandPrefix", () => {
-  test("uses resolved default command in default mode", () => {
+  test("uses resolved default command in default mode", async () => {
     const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
 
-    const resolved = resolveProviderCommandPrefix(undefined, resolveDefault);
+    const resolved = await resolveProviderCommandPrefix(undefined, resolveDefault);
 
     expect(resolveDefault).toHaveBeenCalledTimes(1);
     expect(resolved).toEqual({ command: "/usr/local/bin/claude", args: [] });
   });
 
-  test("appends args in append mode", () => {
+  test("appends args in append mode", async () => {
     const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
 
-    const resolved = resolveProviderCommandPrefix(
+    const resolved = await resolveProviderCommandPrefix(
       {
         mode: "append",
         args: ["--chrome"],
@@ -34,10 +34,10 @@ describe("resolveProviderCommandPrefix", () => {
     });
   });
 
-  test("replaces command in replace mode without resolving default", () => {
+  test("replaces command in replace mode without resolving default", async () => {
     const resolveDefault = vi.fn(() => "/usr/local/bin/claude");
 
-    const resolved = resolveProviderCommandPrefix(
+    const resolved = await resolveProviderCommandPrefix(
       {
         mode: "replace",
         argv: ["docker", "run", "--rm", "my-wrapper"],

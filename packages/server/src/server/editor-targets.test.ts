@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
 
 describe("editor-targets", () => {
-  it("lists available editors in deterministic order", () => {
+  it("lists available editors in deterministic order", async () => {
     const available = new Set(["code", "cursor", "explorer"]);
 
-    const editors = listAvailableEditorTargets({
+    const editors = await listAvailableEditorTargets({
       platform: "win32",
       findExecutable: (command) => (available.has(command) ? command : null),
     });
@@ -17,8 +17,8 @@ describe("editor-targets", () => {
     ]);
   });
 
-  it("returns Finder on macOS", () => {
-    const editors = listAvailableEditorTargets({
+  it("returns Finder on macOS", async () => {
+    const editors = await listAvailableEditorTargets({
       platform: "darwin",
       findExecutable: (command) => (command === "open" ? "/usr/bin/open" : null),
     });
@@ -26,8 +26,8 @@ describe("editor-targets", () => {
     expect(editors).toEqual([{ id: "finder", label: "Finder" }]);
   });
 
-  it("returns the generic file manager target on Linux", () => {
-    const editors = listAvailableEditorTargets({
+  it("returns the generic file manager target on Linux", async () => {
+    const editors = await listAvailableEditorTargets({
       platform: "linux",
       findExecutable: (command) => (command === "xdg-open" ? "/usr/bin/xdg-open" : null),
     });

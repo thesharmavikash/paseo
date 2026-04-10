@@ -57,7 +57,12 @@ import {
 import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
 import { Fonts } from "@/constants/theme";
 import { shouldAnchorHeaderBeforeCollapse } from "@/utils/git-diff-scroll";
-import { buildSplitDiffRows, type SplitDiffDisplayLine, type SplitDiffRow } from "@/utils/diff-layout";
+import {
+  buildSplitDiffRows,
+  buildUnifiedDiffLines,
+  type SplitDiffDisplayLine,
+  type SplitDiffRow,
+} from "@/utils/diff-layout";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,6 +80,11 @@ import { openExternalUrl } from "@/utils/open-external-url";
 import { GitActionsSplitButton } from "@/components/git-actions-split-button";
 import { usePanelStore } from "@/stores/panel-store";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
+import {
+  formatDiffContentText,
+  formatDiffGutterText,
+  hasVisibleDiffTokens,
+} from "@/utils/diff-rendering";
 
 export type { GitActionId, GitAction, GitActions } from "@/components/git-actions-policy";
 
@@ -165,7 +175,7 @@ function DiffGutterCell({
           type === "remove" && styles.removeLineNumberText,
         ]}
       >
-        {lineNumber != null ? String(lineNumber) : ""}
+        {formatDiffGutterText(lineNumber)}
       </Text>
     </View>
   );
@@ -178,10 +188,12 @@ function DiffTextLine({
   line: DiffLine;
   wrapLines: boolean;
 }) {
+  const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
   return (
     <View style={[styles.textLineContainer, lineTypeBackground(line.type)]}>
-      {line.tokens && line.type !== "header" ? (
-        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      {line.type !== "header" && visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
@@ -193,7 +205,7 @@ function DiffTextLine({
             line.type === "context" && styles.contextLineText,
           ]}
         >
-          {line.content || " "}
+          {formatDiffContentText(line.content)}
         </Text>
       )}
     </View>
@@ -207,10 +219,12 @@ function SplitTextLine({
   line: SplitDiffDisplayLine | null;
   wrapLines: boolean;
 }) {
+  const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
   return (
     <View style={[styles.textLineContainer, lineTypeBackground(line?.type)]}>
-      {line?.tokens ? (
-        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      {visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
@@ -222,7 +236,7 @@ function SplitTextLine({
             !line && styles.emptySplitCellText,
           ]}
         >
-          {line?.content ?? ""}
+          {formatDiffContentText(line?.content)}
         </Text>
       )}
     </View>
@@ -240,6 +254,8 @@ function DiffLineView({
   gutterWidth: number;
   wrapLines: boolean;
 }) {
+  const visibleTokens = hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
   return (
     <View
       style={[
@@ -255,11 +271,11 @@ function DiffLineView({
             line.type === "remove" && styles.removeLineNumberText,
           ]}
         >
-          {lineNumber != null ? String(lineNumber) : ""}
+          {formatDiffGutterText(lineNumber)}
         </Text>
       </View>
-      {line.tokens && line.type !== "header" ? (
-        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      {line.type !== "header" && visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
@@ -271,7 +287,7 @@ function DiffLineView({
             line.type === "context" && styles.contextLineText,
           ]}
         >
-          {line.content || " "}
+          {formatDiffContentText(line.content)}
         </Text>
       )}
     </View>
@@ -287,6 +303,8 @@ function SplitDiffLine({
   gutterWidth: number;
   wrapLines: boolean;
 }) {
+  const visibleTokens = line && hasVisibleDiffTokens(line.tokens) ? line.tokens : null;
+
   return (
     <View
       style={[
@@ -302,11 +320,11 @@ function SplitDiffLine({
             line?.type === "remove" && styles.removeLineNumberText,
           ]}
         >
-          {line?.lineNumber != null ? String(line.lineNumber) : ""}
+          {formatDiffGutterText(line?.lineNumber ?? null)}
         </Text>
       </View>
-      {line?.tokens ? (
-        <HighlightedText tokens={line.tokens} wrapLines={wrapLines} />
+      {visibleTokens ? (
+        <HighlightedText tokens={visibleTokens} wrapLines={wrapLines} />
       ) : (
         <Text
           style={[
@@ -318,7 +336,7 @@ function SplitDiffLine({
             !line && styles.emptySplitCellText,
           ]}
         >
-          {line?.content ?? ""}
+          {formatDiffContentText(line?.content)}
         </Text>
       )}
     </View>
@@ -535,26 +553,7 @@ function DiffFileBody({
           );
         }
 
-        const computedLines: { line: DiffLine; lineNumber: number | null; key: string }[] = [];
-        for (const [hunkIndex, hunk] of file.hunks.entries()) {
-          let oldLineNo = hunk.oldStart;
-          let newLineNo = hunk.newStart;
-          for (const [lineIndex, line] of hunk.lines.entries()) {
-            let lineNumber: number | null = null;
-            if (line.type === "remove") {
-              lineNumber = oldLineNo;
-              oldLineNo++;
-            } else if (line.type === "add") {
-              lineNumber = newLineNo;
-              newLineNo++;
-            } else if (line.type === "context") {
-              lineNumber = newLineNo;
-              oldLineNo++;
-              newLineNo++;
-            }
-            computedLines.push({ line, lineNumber, key: `${hunkIndex}-${lineIndex}` });
-          }
-        }
+        const computedLines = buildUnifiedDiffLines(file);
 
         if (wrapLines) {
           return (

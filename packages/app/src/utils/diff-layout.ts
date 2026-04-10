@@ -7,6 +7,12 @@ export interface SplitDiffDisplayLine {
   lineNumber: number | null;
 }
 
+export interface UnifiedDiffDisplayLine {
+  key: string;
+  line: DiffLine;
+  lineNumber: number | null;
+}
+
 export type SplitDiffRow =
   | {
       kind: "header";
@@ -59,6 +65,39 @@ function toDisplayLine(input: {
     tokens: line.tokens,
     lineNumber: side === "left" ? oldLineNumber : newLineNumber,
   };
+}
+
+export function buildUnifiedDiffLines(file: ParsedDiffFile): UnifiedDiffDisplayLine[] {
+  const lines: UnifiedDiffDisplayLine[] = [];
+
+  for (const [hunkIndex, hunk] of file.hunks.entries()) {
+    let oldLineNo = hunk.oldStart;
+    let newLineNo = hunk.newStart;
+
+    for (const [lineIndex, line] of hunk.lines.entries()) {
+      let lineNumber: number | null = null;
+
+      if (line.type === "remove") {
+        lineNumber = oldLineNo;
+        oldLineNo += 1;
+      } else if (line.type === "add") {
+        lineNumber = newLineNo;
+        newLineNo += 1;
+      } else if (line.type === "context") {
+        lineNumber = newLineNo;
+        oldLineNo += 1;
+        newLineNo += 1;
+      }
+
+      lines.push({
+        key: `${hunkIndex}-${lineIndex}`,
+        line,
+        lineNumber,
+      });
+    }
+  }
+
+  return lines;
 }
 
 export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {

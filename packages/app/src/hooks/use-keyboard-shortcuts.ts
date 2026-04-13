@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef } from "react";
-import { Platform } from "react-native";
 import { usePathname } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useHosts } from "@/runtime/host-runtime";
@@ -26,6 +25,7 @@ import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenProjectPicker } from "@/hooks/use-open-project-picker";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
+import { isNative } from "@/constants/platform";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -65,7 +65,7 @@ export function useKeyboardShortcuts({
 
   useEffect(() => {
     if (!enabled) return;
-    if (Platform.OS !== "web") return;
+    if (isNative) return;
     if (isMobile) return;
 
     const isDesktopApp = getIsElectronRuntime();

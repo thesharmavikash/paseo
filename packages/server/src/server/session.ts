@@ -195,7 +195,6 @@ import {
 
 const execAsync = promisify(exec);
 const MAX_INITIAL_AGENT_TITLE_CHARS = Math.min(60, MAX_EXPLICIT_AGENT_TITLE_CHARS);
-const pendingAgentInitializations = new Map<string, Promise<ManagedAgent>>();
 const DEFAULT_AGENT_PROVIDER = AGENT_PROVIDER_IDS[0];
 const WORKSPACE_GIT_WATCH_REMOVED_FINGERPRINT = "__removed__";
 
@@ -1191,10 +1190,7 @@ export class Session {
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
       const persistedUpdatedAt = Date.parse(storedUpdatedAt);
-      if (
-        !Number.isNaN(persistedUpdatedAt) &&
-        (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt)
-      ) {
+      if (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt) {
         payload.updatedAt = storedUpdatedAt;
       }
     }
@@ -1231,15 +1227,9 @@ export class Session {
             record.id,
           ),
           sessionId: record.runtimeInfo.sessionId,
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "model")
-            ? { model: record.runtimeInfo.model ?? null }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "thinkingOptionId")
-            ? { thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(record.runtimeInfo, "modeId")
-            ? { modeId: record.runtimeInfo.modeId ?? null }
-            : {}),
+          model: record.runtimeInfo.model ?? null,
+          thinkingOptionId: record.runtimeInfo.thinkingOptionId ?? null,
+          modeId: record.runtimeInfo.modeId ?? null,
           ...(record.runtimeInfo.extra ? { extra: record.runtimeInfo.extra } : {}),
         }
       : undefined;
@@ -1287,48 +1277,12 @@ export class Session {
       }))
       .filter((value) => !Number.isNaN(value.parsed));
 
-    if (timestamps.length === 0) {
-      return record.updatedAt;
-    }
-
     timestamps.sort((a, b) => b.parsed - a.parsed);
     return timestamps[0].raw;
   }
 
   private async ensureAgentLoaded(agentId: string): Promise<ManagedAgent> {
-    const existing = this.agentManager.getAgent(agentId);
-    if (existing) {
-      return existing;
-    }
-
-    const inflight = pendingAgentInitializations.get(agentId);
-    if (inflight) {
-      return inflight;
-    }
-
-    const initPromise = (async () => {
-      await this.requireStoredAgentRecord(agentId);
-      return this.agentLoadingService.ensureAgentLoaded({ agentId });
-    })();
-
-    pendingAgentInitializations.set(agentId, initPromise);
-
-    try {
-      return await initPromise;
-    } finally {
-      const current = pendingAgentInitializations.get(agentId);
-      if (current === initPromise) {
-        pendingAgentInitializations.delete(agentId);
-      }
-    }
-  }
-
-  private async requireStoredAgentRecord(agentId: string): Promise<StoredAgentRecord> {
-    const record = await this.agentStorage.get(agentId);
-    if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-    return record;
+    return this.agentLoadingService.ensureAgentLoaded({ agentId });
   }
 
   private isProviderVisibleToClient(provider: string): boolean {
@@ -3006,7 +2960,7 @@ export class Session {
 
         const started = await this.handleSendAgentMessage(
           snapshot.id,
-          trimmedPrompt ?? "",
+          trimmedPrompt || "",
           resolveClientMessageId(clientMessageId),
           images,
           attachments,
@@ -3018,10 +2972,7 @@ export class Session {
       }
 
       if (requestId) {
-        const agentPayload = await this.getAgentPayloadById(snapshot.id);
-        if (!agentPayload) {
-          throw new Error(`Agent ${snapshot.id} not found after creation`);
-        }
+        const agentPayload = await this.buildAgentPayload(snapshot);
         this.emit({
           type: "status",
           payload: {
@@ -3030,41 +2981,6 @@ export class Session {
             requestId,
             agent: agentPayload,
           },
-        });
-      }
-
-      if (trimmedPrompt || (images?.length ?? 0) > 0 || (attachments?.length ?? 0) > 0) {
-        scheduleAgentMetadataGeneration({
-          agentManager: this.agentManager,
-          agentId: snapshot.id,
-          cwd: snapshot.cwd,
-          initialPrompt: trimmedPrompt,
-          explicitTitle,
-          paseoHome: this.paseoHome,
-          logger: this.sessionLogger,
-        });
-
-        void this.handleSendAgentMessage(
-          snapshot.id,
-          trimmedPrompt ?? "",
-          resolveClientMessageId(clientMessageId),
-          images,
-          attachments,
-          outputSchema ? { outputSchema } : undefined,
-        ).catch((promptError) => {
-          this.sessionLogger.error(
-            { err: promptError, agentId: snapshot.id },
-            `Failed to run initial prompt for agent ${snapshot.id}`,
-          );
-          this.emit({
-            type: "activity_log",
-            payload: {
-              id: uuidv4(),
-              timestamp: new Date(),
-              type: "error",
-              content: `Initial prompt failed: ${(promptError as Error)?.message ?? promptError}`,
-            },
-          });
         });
       }
 
@@ -3149,10 +3065,7 @@ export class Session {
       await this.forwardAgentUpdate(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
       if (requestId) {
-        const agentPayload = await this.getAgentPayloadById(snapshot.id);
-        if (!agentPayload) {
-          throw new Error(`Agent ${snapshot.id} not found after resume`);
-        }
+        const agentPayload = await this.buildAgentPayload(snapshot);
         this.emit({
           type: "status",
           payload: {

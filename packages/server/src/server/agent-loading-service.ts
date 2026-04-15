@@ -16,7 +16,11 @@ const pendingAgentBootstrapLoads = new Map<string, Promise<ManagedAgent>>();
 export type AgentLoadingServiceOptions = {
   agentManager: Pick<
     AgentManager,
-    "createAgent" | "getAgent" | "reloadAgentSession" | "resumeAgentFromPersistence"
+    | "createAgent"
+    | "getAgent"
+    | "hydrateTimelineFromProvider"
+    | "reloadAgentSession"
+    | "resumeAgentFromPersistence"
   >;
   agentStorage: Pick<AgentStorage, "get">;
   logger: pino.Logger;
@@ -51,10 +55,7 @@ export class AgentLoadingService {
     try {
       return await initPromise;
     } finally {
-      const current = pendingAgentBootstrapLoads.get(options.agentId);
-      if (current === initPromise) {
-        pendingAgentBootstrapLoads.delete(options.agentId);
-      }
+      pendingAgentBootstrapLoads.delete(options.agentId);
     }
   }
 
@@ -62,15 +63,24 @@ export class AgentLoadingService {
     handle: AgentPersistenceHandle;
     overrides?: Partial<AgentSessionConfig>;
   }): Promise<ManagedAgent> {
-    return this.agentManager.resumeAgentFromPersistence(options.handle, options.overrides);
+    const snapshot = await this.agentManager.resumeAgentFromPersistence(
+      options.handle,
+      options.overrides,
+    );
+    await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+    return snapshot;
   }
 
   async refreshAgent(options: { agentId: string }): Promise<ManagedAgent> {
     const existing = this.agentManager.getAgent(options.agentId);
     if (existing) {
-      return existing.persistence
-        ? await this.agentManager.reloadAgentSession(options.agentId)
-        : existing;
+      if (!existing.persistence) {
+        return existing;
+      }
+
+      const snapshot = await this.agentManager.reloadAgentSession(options.agentId);
+      await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+      return snapshot;
     }
 
     const record = await this.agentStorage.get(options.agentId);
@@ -83,12 +93,14 @@ export class AgentLoadingService {
       throw new Error(`Agent ${options.agentId} cannot be refreshed because it lacks persistence`);
     }
 
-    return this.agentManager.resumeAgentFromPersistence(
+    const snapshot = await this.agentManager.resumeAgentFromPersistence(
       handle,
       buildConfigOverrides(record),
       options.agentId,
       extractTimestamps(record),
     );
+    await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+    return snapshot;
   }
 
   private async loadStoredAgent(options: { agentId: string }): Promise<ManagedAgent> {
@@ -126,6 +138,7 @@ export class AgentLoadingService {
       );
     }
 
-    return this.agentManager.getAgent(options.agentId) ?? snapshot;
+    await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
+    return snapshot;
   }
 }

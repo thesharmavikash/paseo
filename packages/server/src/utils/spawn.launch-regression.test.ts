@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { afterEach, describe, expect, test } from "vitest";
 
+import { findExecutable } from "./executable.js";
 import { spawnProcess } from "./spawn.js";
 
 type SpawnResult = {
@@ -17,10 +18,11 @@ type SpawnResult = {
 const tempDirs: string[] = [];
 const JSON_ARG = '{"key":"value with spaces","nested":{"quote":"\\"yes\\""}}';
 
-function makeFixture(): {
+function makeFixture(options?: { includeCmdShim?: boolean }): {
   root: string;
   fakeDaemonNode: string;
   shim: string;
+  powerShellShim: string;
   assertScript: string;
   expectedArgs: string[];
 } {
@@ -35,6 +37,11 @@ function makeFixture(): {
   writeFileSync(
     assertScript,
     `
+if (process.argv.includes("--version")) {
+  console.log("fake-provider 1.0.0");
+  process.exit(0);
+}
+
 const expected = JSON.parse(process.env.PASEO_EXPECTED_ARGV_JSON);
 const actual = process.argv.slice(2);
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -47,12 +54,25 @@ console.log("ARGV_OK");
   );
 
   const shim = path.join(root, "claude.cmd");
+  if (options?.includeCmdShim !== false) {
+    writeFileSync(
+      shim,
+      ["@echo off", "setlocal", `\"${fakeDaemonNode}\" \"${assertScript}\" %*`, ""].join("\r\n"),
+    );
+  }
+
+  const powerShellShim = path.join(root, "claude.ps1");
   writeFileSync(
-    shim,
-    ["@echo off", "setlocal", `\"${fakeDaemonNode}\" \"${assertScript}\" %*`, ""].join("\r\n"),
+    powerShellShim,
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `& '${fakeDaemonNode.replace(/'/g, "''")}' '${assertScript.replace(/'/g, "''")}' @args`,
+      "exit $LASTEXITCODE",
+      "",
+    ].join("\r\n"),
   );
 
-  return { root, fakeDaemonNode, shim, assertScript, expectedArgs };
+  return { root, fakeDaemonNode, shim, powerShellShim, assertScript, expectedArgs };
 }
 
 function collectChild(child: ChildProcess, timeoutMs = 10_000): Promise<SpawnResult> {
@@ -114,6 +134,34 @@ async function runFixture(params: {
   return collectChild(child);
 }
 
+function withWindowsPathEntry<T>(dir: string, run: () => Promise<T>): Promise<T> {
+  const pathKey =
+    process.platform === "win32"
+      ? (Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "Path")
+      : "PATH";
+  const previousPath = process.env[pathKey];
+  const previousPathExt = process.env.PATHEXT;
+
+  process.env[pathKey] = previousPath ? `${dir}${path.delimiter}${previousPath}` : dir;
+  process.env.PATHEXT = previousPathExt?.toLowerCase().includes(".ps1")
+    ? previousPathExt
+    : `${previousPathExt ?? ""};.PS1`;
+
+  return run().finally(() => {
+    if (previousPath === undefined) {
+      delete process.env[pathKey];
+    } else {
+      process.env[pathKey] = previousPath;
+    }
+
+    if (previousPathExt === undefined) {
+      delete process.env.PATHEXT;
+    } else {
+      process.env.PATHEXT = previousPathExt;
+    }
+  });
+}
+
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -166,6 +214,27 @@ describe.runIf(process.platform === "win32")("Windows spawn launch regression", 
     expect(result.signal).toBeNull();
     expect(result.stderr).toBe("");
     expect(result.stdout.trim()).toBe("ARGV_OK");
+  });
+
+  test("detects and launches a PowerShell shim from PATH without corrupting JSON args", async () => {
+    const fixture = makeFixture({ includeCmdShim: false });
+
+    await withWindowsPathEntry(fixture.root, async () => {
+      const detected = await findExecutable("claude");
+      expect(detected?.toLowerCase()).toBe(fixture.powerShellShim.toLowerCase());
+
+      const result = await runFixture({
+        command: detected!,
+        args: fixture.expectedArgs,
+        shell: false,
+      });
+
+      expect(result.error).toBeNull();
+      expect(result.code).toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("ARGV_OK");
+    });
   });
 });
 
